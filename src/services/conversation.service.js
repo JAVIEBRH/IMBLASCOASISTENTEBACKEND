@@ -932,6 +932,19 @@ export async function processMessageWithAI(userId, message, conversationHistory 
     try {
       console.log(`[WooCommerce] Buscando productos para consulta: "${message}"`)
       
+      // Guardia rápida: si no hay SKU/ID explícito y no se puede extraer ningún término de producto, no consultar WooCommerce
+      const quickExtractedTerm = extractProductTerm(message)
+      if (!providedExplicitSku && !providedExplicitId && (!quickExtractedTerm || quickExtractedTerm.length === 0)) {
+        console.log(`[WooCommerce] ⚠️ Consulta de producto sin término identificable. Se pedirá nombre o SKU al usuario.`)
+        // Responder pidiendo nombre o SKU, sin bajar catálogo completo
+        return createResponse(
+          'Necesito el nombre completo o el SKU del producto para darte precio y stock. ¿Me lo confirmas?',
+          session.state,
+          null,
+          cart
+        )
+      }
+      
       // ESTRATEGIA 0: Detectar si el usuario menciona explícitamente un SKU o ID
       // Patrón 1: "SKU: N35" o "SKU 601059110" o "SKU: 601059110" (cualquier SKU después de "SKU:")
       const explicitSkuMatch = message.match(/(?:sku|SKU)[:\s]+([^\s]+)/i)
