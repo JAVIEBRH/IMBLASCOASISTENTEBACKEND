@@ -208,6 +208,67 @@ export function getOpenAIClient() {
 }
 
 /**
+ * Analizar mensaje para detectar SKU numérico usando IA
+ * @param {string} message - Mensaje del usuario
+ * @returns {Promise<string|null>} SKU numérico detectado o null
+ */
+export async function detectarSkuNumerico(message) {
+  try {
+    const client = getOpenAIClient()
+    
+    const analysisPrompt = `Analiza el siguiente mensaje del cliente y determina si contiene un SKU numérico (código de producto con muchos dígitos, típicamente 6 o más dígitos).
+
+Mensaje: "${message}"
+
+INSTRUCCIONES:
+- Si encuentras un número de 6 o más dígitos que parece ser un SKU/código de producto, responde SOLO con ese número
+- Si no encuentras ningún SKU numérico, responde "NO"
+- Los SKUs numéricos suelen ser códigos largos como 601050020, 601059110, etc.
+- NO respondas con explicaciones, solo el número o "NO"
+
+Ejemplos:
+- "tienes stock de 601050020?" → 601050020
+- "hola tienes 601059110" → 601059110
+- "qué precio tiene el 123456789" → 123456789
+- "tienes mochilas?" → NO
+- "tienes el L02?" → NO (L02 tiene letra, no es numérico puro)
+
+Respuesta:`
+
+    const response = await client.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'system',
+          content: 'Eres un analizador de mensajes. Extrae SKUs numéricos cuando existan. Responde solo con el número o "NO".'
+        },
+        {
+          role: 'user',
+          content: analysisPrompt
+        }
+      ],
+      temperature: 0.1, // Baja temperatura para respuestas más determinísticas
+      max_tokens: 20
+    })
+
+    const resultado = response.choices[0]?.message?.content?.trim() || ''
+    
+    // Verificar si la respuesta es un número (SKU numérico)
+    if (resultado && resultado !== 'NO' && /^\d{6,}$/.test(resultado)) {
+      console.log(`[IA] ✅ SKU numérico detectado por IA: "${resultado}"`)
+      return resultado
+    }
+    
+    console.log(`[IA] ⚠️ No se detectó SKU numérico en: "${message}"`)
+    return null
+    
+  } catch (error) {
+    console.error(`[IA] ❌ Error detectando SKU numérico:`, error.message)
+    return null // En caso de error, retornar null para continuar con flujo normal
+  }
+}
+
+/**
  * Redactar respuesta usando OpenAI Chat Completions API
  * 
  * @param {string} textoParaRedactar - Texto claro que describe qué debe redactar la IA
@@ -316,5 +377,6 @@ export default {
   initializeOpenAI,
   getOpenAIClient,
   redactarRespuesta,
+  detectarSkuNumerico,
   isConfigured
 }

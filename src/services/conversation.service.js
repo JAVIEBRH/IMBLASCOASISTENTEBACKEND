@@ -932,17 +932,59 @@ export async function processMessageWithAI(userId, message, conversationHistory 
     try {
       console.log(`[WooCommerce] Buscando productos para consulta: "${message}"`)
       
-      // Guardia rápida: si no hay SKU/ID explícito y no se puede extraer ningún término de producto, no consultar WooCommerce
+      // Verificar si el mensaje es ambiguo (no tiene término de producto explícito)
       const quickExtractedTerm = extractProductTerm(message)
-      if (!providedExplicitSku && !providedExplicitId && (!quickExtractedTerm || quickExtractedTerm.length === 0)) {
-        console.log(`[WooCommerce] ⚠️ Consulta de producto sin término identificable. Se pedirá nombre o SKU al usuario.`)
-        // Responder pidiendo nombre o SKU, sin bajar catálogo completo
-        return createResponse(
-          'Necesito el nombre completo o el SKU del producto para darte precio y stock. ¿Me lo confirmas?',
-          session.state,
-          null,
-          cart
-        )
+      const isAmbiguousQuery = !providedExplicitSku && !providedExplicitId && (!quickExtractedTerm || quickExtractedTerm.length === 0)
+      
+        // Si es una consulta ambigua, verificar si hay contexto de productos anteriores
+        if (isAmbiguousQuery) {
+          // Verificar si hay un producto en el contexto de la sesión
+          if (context.currentProduct) {
+            console.log(`[WooCommerce] 🔍 Consulta ambigua detectada, pero hay producto en contexto: ${context.currentProduct.name || context.currentProduct.codigo || 'N/A'}`)
+            // Usar el producto del contexto
+            productStockData = context.currentProduct
+            context.productStockData = productStockData
+            // Actualizar currentProduct en la sesión para futuras referencias
+            session.currentProduct = productStockData
+          } else {
+            // Buscar en el historial reciente si hay productos mencionados
+            const recentHistory = session.history?.slice(-10) || [] // Últimos 10 mensajes
+            for (const msg of recentHistory.reverse()) {
+              if (msg.sender === 'bot' && msg.message) {
+                // Buscar SKUs mencionados en respuestas anteriores
+                const skuMatch = msg.message.match(/SKU[:\s]+([^\s\n]+)/i)
+                if (skuMatch) {
+                  const skuFromHistory = skuMatch[1].trim()
+                  console.log(`[WooCommerce] 🔍 Consulta ambigua, pero encontré SKU en historial: "${skuFromHistory}"`)
+                  try {
+                    const productFromHistory = await wordpressService.getProductBySku(skuFromHistory)
+                    if (productFromHistory) {
+                      productStockData = productFromHistory
+                      context.productStockData = productStockData
+                      // Guardar en currentProduct para futuras referencias
+                      session.currentProduct = productFromHistory
+                      console.log(`[WooCommerce] ✅ Producto encontrado desde historial: ${productFromHistory.name}`)
+                      break
+                    }
+                  } catch (error) {
+                    console.log(`[WooCommerce] ⚠️ No se pudo obtener producto del historial: ${error.message}`)
+                  }
+                }
+              }
+            }
+          }
+        
+        // Si después de buscar en contexto todavía no hay producto, pedir más información
+        if (!productStockData) {
+          console.log(`[WooCommerce] ⚠️ Consulta de producto sin término identificable y sin contexto. Se pedirá nombre o SKU al usuario.`)
+          // Responder pidiendo nombre o SKU, sin bajar catálogo completo
+          return createResponse(
+            'Necesito el nombre completo o el SKU del producto para darte precio y stock. ¿Me lo confirmas?',
+            session.state,
+            null,
+            cart
+          )
+        }
       }
       
       // ESTRATEGIA 0: Detectar si el usuario menciona explícitamente un SKU o ID
@@ -988,13 +1030,13 @@ export async function processMessageWithAI(userId, message, conversationHistory 
           console.log(`[WooCommerce] 🔍 SKU detectado (standalone): "${standaloneSkuMatch[1]}"`)
         }
         
-        // Buscar SKU numérico largo (ej: "601059110")
-        const isShortMessage = message.trim().split(/\s+/).length <= 3
-        if (detectedSkus.length === 0 && isShortMessage) {
+        // Buscar SKU numérico largo (ej: "601059110", "601050020") - sin restricción de longitud de mensaje
+        // Los SKUs numéricos largos (6+ dígitos) son muy específicos y deben detectarse siempre
+        if (detectedSkus.length === 0) {
           const numericSkuMatch = message.match(/\b(\d{6,})\b/)
           if (numericSkuMatch) {
             detectedSkus.push(numericSkuMatch[1].trim())
-            console.log(`[WooCommerce] 🔍 SKU numérico detectado: "${numericSkuMatch[1]}"`)
+            console.log(`[WooCommerce] 🔍 SKU numérico largo detectado: "${numericSkuMatch[1]}"`)
           }
         }
       }
@@ -1007,10 +1049,32 @@ export async function processMessageWithAI(userId, message, conversationHistory 
         }
       }
       
+      // Si no se detectó SKU con reglas, usar IA para detectar SKU numérico
+      if (!providedExplicitSku) {
+        console.log(`[WooCommerce] 🤖 Consultando IA para detectar SKU numérico en el mensaje...`)
+        try {
+          const skuDetectadoPorIA = await conkavoAI.detectarSkuNumerico(message)
+          if (skuDetectadoPorIA) {
+            providedExplicitSku = skuDetectadoPorIA
+            console.log(`[WooCommerce] ✅ IA detectó SKU numérico: "${providedExplicitSku}"`)
+          } else {
+            console.log(`[WooCommerce] ⚠️ IA no detectó SKU numérico en el mensaje`)
+          }
+        } catch (error) {
+          console.error(`[WooCommerce] ❌ Error consultando IA para detectar SKU:`, error.message)
+          // Continuar con flujo normal si falla la detección por IA
+        }
+      }
+      
       if (explicitIdMatch) {
         providedExplicitId = explicitIdMatch[1].trim()
         console.log(`[WooCommerce] 🔍 ID detectado: "${providedExplicitId}"`)
       }
+      
+      // Si ya tenemos un producto del contexto (consulta ambigua resuelta), omitir búsquedas adicionales
+      if (productStockData) {
+        console.log(`[WooCommerce] ✅ Producto ya encontrado desde contexto, omitiendo búsquedas adicionales`)
+      } else {
       
       // Buscar por SKU primero
       if (providedExplicitSku) {
@@ -1023,6 +1087,7 @@ export async function processMessageWithAI(userId, message, conversationHistory 
           if (productBySku) {
             productStockData = productBySku
             context.productStockData = productStockData
+            session.currentProduct = productBySku // Guardar para futuras referencias
             console.log(`[WooCommerce] ✅ Producto encontrado por SKU explícito: ${productBySku.name} (SKU: ${productBySku.sku})`)
             console.log(`   Stock: ${productBySku.stock_quantity !== null ? productBySku.stock_quantity : 'N/A'}, Precio: ${productBySku.price ? '$' + productBySku.price : 'N/A'}`)
           } else {
@@ -1040,6 +1105,7 @@ export async function processMessageWithAI(userId, message, conversationHistory 
               if (productsWithCode.length === 1) {
                 productStockData = productsWithCode[0]
                 context.productStockData = productStockData
+                session.currentProduct = productsWithCode[0] // Guardar para futuras referencias
                 console.log(`[WooCommerce] ✅ Producto encontrado por código en nombre/SKU: ${productStockData.name} (SKU real: ${productStockData.sku || 'N/A'})`)
               } else if (productsWithCode.length > 1) {
                 productSearchResults = productsWithCode.slice(0, 10) // limitar para no saturar respuestas
@@ -1067,6 +1133,7 @@ export async function processMessageWithAI(userId, message, conversationHistory 
           if (productById) {
             productStockData = productById
             context.productStockData = productStockData
+            session.currentProduct = productById // Guardar para futuras referencias
             console.log(`[WooCommerce] ✅ Producto encontrado por ID explícito: ${productById.name} (ID: ${productById.id})`)
             console.log(`   Stock: ${productById.stock_quantity !== null ? productById.stock_quantity : 'N/A'}, Precio: ${productById.price ? '$' + productById.price : 'N/A'}`)
           } else {
@@ -1430,9 +1497,18 @@ export async function processMessageWithAI(userId, message, conversationHistory 
         try {
           const wpFallbackResults = await wordpressService.searchProductsInWordPress(fallbackTerm, 10)
           if (wpFallbackResults?.length) {
-            productSearchResults = wpFallbackResults
-            context.productSearchResults = wpFallbackResults
-            console.log(`[WooCommerce] ✅ Fallback WP search (final): ${wpFallbackResults.length} productos para "${fallbackTerm}"`)
+            // Si hay un solo resultado del fallback, tratarlo como producto encontrado (productStockData)
+            if (wpFallbackResults.length === 1) {
+              productStockData = wpFallbackResults[0]
+              context.productStockData = productStockData
+              session.currentProduct = wpFallbackResults[0] // Guardar para futuras referencias
+              console.log(`[WooCommerce] ✅ Fallback WP search: producto único encontrado - ${productStockData.name} (SKU: ${productStockData.sku || 'N/A'}, Precio: ${productStockData.price ? '$' + productStockData.price : 'N/A'})`)
+            } else {
+              // Múltiples resultados, agregarlos a productSearchResults
+              productSearchResults = wpFallbackResults
+              context.productSearchResults = wpFallbackResults
+              console.log(`[WooCommerce] ✅ Fallback WP search (final): ${wpFallbackResults.length} productos para "${fallbackTerm}"`)
+            }
           } else {
             console.log(`[WooCommerce] ⚠️ Fallback WP search (final) sin resultados para "${fallbackTerm}"`)
           }
@@ -1440,6 +1516,7 @@ export async function processMessageWithAI(userId, message, conversationHistory 
           console.error(`[WooCommerce] ❌ Error en fallback WP search (final):`, fallbackError.message)
         }
       }
+      } // Cierra el else de "si ya tenemos producto del contexto, omitir búsquedas"
       
       // Verificar resultados finales (usar context para asegurar que tenemos los valores actualizados)
       const finalSearchResults = context.productSearchResults || productSearchResults || []
