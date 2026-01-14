@@ -1196,7 +1196,31 @@ export async function processMessageWithAI(userId, message, conversationHistory 
                   console.log(`[WooCommerce] ✅ Producto encontrado por SKU del nombre: ${productBySku.name} (SKU: ${productBySku.sku})`)
                   console.log(`   Stock: ${productBySku.stock_quantity !== null ? productBySku.stock_quantity : 'N/A'}, Precio: ${productBySku.price ? '$' + productBySku.price : 'N/A'}`)
                 } else {
-                  console.log(`[WooCommerce] ⚠️  No se encontró producto con SKU "${detectedSkuFromName}", continuando con búsqueda por nombre`)
+                  console.log(`[WooCommerce] ⚠️  No se encontró producto con SKU "${detectedSkuFromName}", buscando código en nombres/SKU...`)
+                  // Fallback: buscar el código detectado en nombres/SKU normalizados
+                  try {
+                    const allProducts = await wordpressService.getAllProducts()
+                    const normalizedCode = normalizeCode(detectedSkuFromName)
+                    const productsWithCode = allProducts.filter(p => {
+                      const productName = normalizeCode(p.name || '')
+                      const productSku = normalizeCode(p.sku || '')
+                      return productName.includes(normalizedCode) || productSku.includes(normalizedCode)
+                    })
+                    
+                    if (productsWithCode.length === 1) {
+                      productStockData = productsWithCode[0]
+                      context.productStockData = productStockData
+                      console.log(`[WooCommerce] ✅ Producto encontrado por código en nombre/SKU: ${productStockData.name} (SKU real: ${productStockData.sku || 'N/A'})`)
+                    } else if (productsWithCode.length > 1) {
+                      productSearchResults = productsWithCode.slice(0, 10)
+                      context.productSearchResults = productSearchResults
+                      console.log(`[WooCommerce] ✅ Encontrados ${productsWithCode.length} productos que contienen "${detectedSkuFromName}" en nombre/SKU`)
+                    } else {
+                      console.log(`[WooCommerce] ❌ Tampoco se encontró "${detectedSkuFromName}" en nombres/SKU normalizados`)
+                    }
+                  } catch (error) {
+                    console.log(`[WooCommerce] ⚠️  Error buscando código en nombres/SKU: ${error.message}`)
+                  }
                 }
               } catch (error) {
                 console.log(`[WooCommerce] ⚠️  Error buscando SKU "${detectedSkuFromName}": ${error.message}, continuando con búsqueda por nombre`)
@@ -1204,7 +1228,7 @@ export async function processMessageWithAI(userId, message, conversationHistory 
             }
             
             // Si no se encontró por SKU, buscar por nombre sin SKU
-            if (!productStockData) {
+            if (!productStockData && !productSearchResults.length) {
               // Extraer término del producto (sin stop words, sin prefijos)
               const productTerm = extractProductTerm(messageWithoutSku)
               console.log(`[WooCommerce] Término del producto extraído (sin SKU): "${productTerm}"`)
