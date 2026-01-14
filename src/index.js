@@ -22,17 +22,33 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Cargar .env con path explícito compatible con ES Modules
+// En producción (Render), las variables están en process.env directamente
+// Solo cargar .env si existe (desarrollo local)
 const envPath = path.resolve(__dirname, "../.env");
 const envResult = dotenv.config({
   path: envPath,
+  override: false, // No sobrescribir variables de entorno existentes
 });
 
-if (envResult.error) {
-  console.error("❌ ERROR cargando .env:", envResult.error.message);
-  console.error("   Ruta intentada:", envPath);
-} else {
+if (envResult.error && process.env.NODE_ENV !== 'production') {
+  console.warn("⚠️  Archivo .env no encontrado (esto es normal en producción):", envPath);
+} else if (!envResult.error) {
   console.log("✅ Archivo .env cargado desde:", envPath);
 }
+
+// En producción, las variables vienen de Render directamente
+if (process.env.NODE_ENV === 'production') {
+  console.log("🔧 Modo producción: usando variables de entorno de Render");
+}
+
+// Debug: Mostrar variables de entorno disponibles (sin valores sensibles)
+console.log("🔍 Variables de entorno disponibles:");
+console.log("  NODE_ENV:", process.env.NODE_ENV || "no definido");
+console.log("  DB_HOST:", process.env.DB_HOST ? "✅ definido" : "❌ no definido");
+console.log("  DB_NAME:", process.env.DB_NAME ? "✅ definido" : "❌ no definido");
+console.log("  DB_USER:", process.env.DB_USER ? "✅ definido" : "❌ no definido");
+console.log("  DB_PASSWORD:", process.env.DB_PASSWORD ? "✅ definido" : "❌ no definido");
+console.log("  OPENAI_API_KEY:", process.env.OPENAI_API_KEY ? "✅ definido" : "❌ no definido");
 
 // Verificar que OPENAI_API_KEY esté cargada
 const apiKey = process.env.OPENAI_API_KEY?.trim();
@@ -40,9 +56,8 @@ const apiKey = process.env.OPENAI_API_KEY?.trim();
 if (!apiKey) {
   console.error("❌ ERROR: OPENAI_API_KEY no definida en variables de entorno");
   console.error(
-    "   Verifica que el archivo .env exista y contenga OPENAI_API_KEY"
+    "   Verifica que esté configurada en Render (Environment Variables)"
   );
-  console.error("   Ruta del .env:", envPath);
 } else {
   console.log("✅ OPENAI_API_KEY cargada correctamente");
   console.log(`   Longitud: ${apiKey.length} caracteres`);
