@@ -283,7 +283,7 @@ export function getOpenAIClient() {
  * @param {Array} conversationHistory - Historial reciente de conversación (opcional)
  * @returns {Promise<Object>} Análisis de intención con tipo, término de producto, y acción recomendada
  */
-export async function analizarIntencionConsulta(message, conversationHistory = []) {
+export async function analizarIntencionConsulta(message, conversationHistory = [], currentProduct = null) {
   try {
     const client = getOpenAIClient()
     
@@ -293,9 +293,16 @@ export async function analizarIntencionConsulta(message, conversationHistory = [
         ).join('\n')}`
       : ''
     
+    const productContext = currentProduct
+      ? `\n\n⚠️ CONTEXTO IMPORTANTE: Hay un producto mencionado anteriormente en la conversación:
+- Nombre: ${currentProduct.name || currentProduct.codigo || 'N/A'}
+- SKU: ${currentProduct.sku || 'N/A'}
+Si el mensaje del cliente pregunta sobre precio, stock, disponibilidad, características, o variantes SIN mencionar otro producto específico, probablemente se refiere a este producto del contexto.`
+      : ''
+    
     const analysisPrompt = `Analiza el siguiente mensaje del cliente y determina su intención.
 
-Mensaje: "${message}"${historyContext}
+Mensaje: "${message}"${historyContext}${productContext}
 
 INSTRUCCIONES:
 Analiza el mensaje y responde SOLO con un JSON válido en este formato exacto:
@@ -340,7 +347,17 @@ REGLAS ESTRICTAS (CRÍTICO - EVITAR FALSOS POSITIVOS):
    - "tienen un producto" → AMBIGUA
    - "hola tienen productos" → AMBIGUA
    - "necesito saber si tienen" → AMBIGUA
-   - "cuál es su precio" (sin contexto) → AMBIGUA
+   - "hola!!!" → AMBIGUA (saludo genérico, NO se refiere a producto del contexto)
+   - "tienen usb?" → AMBIGUA (pregunta sobre otro producto, NO se refiere a contexto)
+   - "cuál es su precio" (SIN contexto de producto) → AMBIGUA
+   - "cuál es su precio" (CON contexto de producto) → PRODUCTO (usando producto del contexto)
+   - "cuanto cuesta" (CON contexto) → PRODUCTO (usando producto del contexto)
+   - "tiene stock?" (CON contexto) → PRODUCTO (usando producto del contexto)
+   
+   ⚠️ REGLA CRÍTICA PARA AMBIGUA:
+   - Si hay producto en contexto Y el mensaje pregunta sobre precio/stock/disponibilidad SIN mencionar otro producto → NO es AMBIGUA, es PRODUCTO (usando contexto)
+   - Si el mensaje es un saludo genérico ("hola", "buenos días") → AMBIGUA (NO usar contexto)
+   - Si el mensaje pregunta sobre OTRO producto específico ("tienen usb?", "tienen mochilas?") → AMBIGUA o PRODUCTO según el término (NO usar contexto anterior)
 
 7. Extracción de términos:
    - NO extraigas términos genéricos como "producto", "productos", "artículo"
@@ -362,6 +379,14 @@ Ejemplos:
 - "¿Me hacen precio por volumen?" → {"tipo":"FALLBACK","terminoProducto":null,"sku":null,"id":null,"atributo":null,"valorAtributo":null,"tipoFallback":"DESCUENTO","necesitaMasInfo":false,"razon":"Consulta sobre descuento, no disponible"}
 - "necesito saber si tienen un producto" → {"tipo":"AMBIGUA","terminoProducto":null,"sku":null,"id":null,"atributo":null,"valorAtributo":null,"tipoFallback":null,"necesitaMasInfo":true,"razon":"Consulta genérica sin término de producto específico"}
 - "horarios de atención" → {"tipo":"INFORMACION_GENERAL","terminoProducto":null,"sku":null,"id":null,"atributo":null,"valorAtributo":null,"tipoFallback":null,"necesitaMasInfo":false,"razon":"Consulta de información general"}
+
+Ejemplos CON CONTEXTO DE PRODUCTO:
+- Contexto: producto "Boligrafo Bamboo L39" (SKU: L39)
+  - "cuanto cuesta" → {"tipo":"PRODUCTO","terminoProducto":"L39","sku":"L39","id":null,"atributo":null,"valorAtributo":null,"tipoFallback":null,"necesitaMasInfo":false,"razon":"Consulta sobre precio del producto del contexto"}
+  - "cual es su precio" → {"tipo":"PRODUCTO","terminoProducto":"L39","sku":"L39","id":null,"atributo":null,"valorAtributo":null,"tipoFallback":null,"necesitaMasInfo":false,"razon":"Consulta sobre precio del producto del contexto"}
+  - "tiene stock?" → {"tipo":"PRODUCTO","terminoProducto":"L39","sku":"L39","id":null,"atributo":null,"valorAtributo":null,"tipoFallback":null,"necesitaMasInfo":false,"razon":"Consulta sobre stock del producto del contexto"}
+  - "hola!!!" → {"tipo":"AMBIGUA","terminoProducto":null,"sku":null,"id":null,"atributo":null,"valorAtributo":null,"tipoFallback":null,"necesitaMasInfo":true,"razon":"Saludo genérico, no se refiere al producto del contexto"}
+  - "tienen usb?" → {"tipo":"AMBIGUA","terminoProducto":null,"sku":null,"id":null,"atributo":null,"valorAtributo":null,"tipoFallback":null,"necesitaMasInfo":true,"razon":"Pregunta sobre otro producto (USB), no se refiere al contexto"}
 
 Respuesta (SOLO el JSON, sin explicaciones adicionales):`
 
