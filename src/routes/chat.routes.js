@@ -180,7 +180,7 @@ chatRouter.post('/reset/:userId', async (req, res, next) => {
  */
 chatRouter.post('/message', async (req, res, next) => {
   try {
-    const { userId, message, conversationHistory = [] } = req.body
+    const { userId, message } = req.body
 
     if (!userId || typeof userId !== 'string' || userId.trim().length === 0) {
       return res.status(400).json({
@@ -196,12 +196,11 @@ chatRouter.post('/message', async (req, res, next) => {
       })
     }
 
-    // Procesar mensaje con IA y contexto del chat
+    // Procesar mensaje con IA (el historial se obtiene de la sesión internamente)
     try {
       const response = await conversationService.processMessageWithAI(
         userId.trim(),
-        message.trim(),
-        conversationHistory
+        message.trim()
       )
 
       res.json({

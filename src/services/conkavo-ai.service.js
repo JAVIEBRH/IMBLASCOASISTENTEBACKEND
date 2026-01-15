@@ -74,6 +74,7 @@ REGLAS ABSOLUTAS
 - No ofrezcas reservas ni agregar al carrito; esas funciones no existen.
 - Si el backend te entrega un formato específico (líneas, numeración, orden de nombre/SKU/stock/precio), respeta exactamente ese orden y los saltos de línea. NO reordenes ni combines en una sola línea.
 - Cuando el producto está identificado, SIEMPRE incluye nombre, SKU, stock y precio en líneas separadas; si un dato falta, marca "N/A", pero no omitas el campo.
+- ⚠️ CRÍTICO SOBRE STOCK: SIEMPRE incluye el stock en tu respuesta, incluso si el cliente pregunta solo por precio. Si el stock es 0, muestra "Stock agotado (0 unidades)". NUNCA omitas el stock, es obligatorio en todas las respuestas de productos.
 
 INFORMACIÓN GENERAL DE LA EMPRESA
 Para consultas TIPO A:
@@ -168,6 +169,15 @@ Usuario: "¿Tienen bolígrafos?"
 Respuesta:
 "Necesito el nombre completo o el SKU del producto para darte precio y stock. ¿Me lo confirmas?"
 
+Usuario: "cuanto cuesta" (después de haber consultado un producto)
+Respuesta (si el producto ya está identificado):
+"Sí, tenemos el [Nombre del Producto] disponible.
+SKU: [SKU].
+Stock: [cantidad] unidades disponibles.
+Precio: $[precio].
+¿Te gustaría saber algo más? 😊"
+⚠️ NOTA: Incluso si el cliente pregunta solo por precio, SIEMPRE incluye el stock en la respuesta.
+
 ❌ EJEMPLOS INCORRECTOS (NO HACER)
 
 Usuario: "¿Hay stock del bolígrafo metálico L88?"
@@ -185,6 +195,16 @@ PROBLEMAS:
 - No pide confirmación cuando hay múltiples opciones
 - No incluye SKU, stock y precio para cada una
 - No sigue el formato requerido
+
+Usuario: "cuanto cuesta" (después de haber consultado un producto)
+Respuesta INCORRECTA:
+"Sí, tenemos el Llavero Destapador K35 disponible.
+SKU: K35.
+Precio: $445.
+¿Te gustaría saber algo más? 😊"
+PROBLEMAS:
+- ❌ OMITE el stock (CRÍTICO: siempre debe incluirse)
+- No sigue el formato completo requerido
 
 ✅ REGLAS DE VALIDACIÓN ANTES DE RESPONDER
 
@@ -255,6 +275,163 @@ export function getOpenAIClient() {
     initializeOpenAI()
   }
   return openaiClient
+}
+
+/**
+ * Analizar intención de la consulta del usuario usando IA
+ * @param {string} message - Mensaje del usuario
+ * @param {Array} conversationHistory - Historial reciente de conversación (opcional)
+ * @returns {Promise<Object>} Análisis de intención con tipo, término de producto, y acción recomendada
+ */
+export async function analizarIntencionConsulta(message, conversationHistory = []) {
+  try {
+    const client = getOpenAIClient()
+    
+    const historyContext = conversationHistory.length > 0
+      ? `\n\nHistorial reciente:\n${conversationHistory.slice(-4).map(msg => 
+          `${msg.sender === 'user' ? 'Cliente' : 'Bot'}: ${(msg.message || msg.text || '').substring(0, 150)}`
+        ).join('\n')}`
+      : ''
+    
+    const analysisPrompt = `Analiza el siguiente mensaje del cliente y determina su intención.
+
+Mensaje: "${message}"${historyContext}
+
+INSTRUCCIONES:
+Analiza el mensaje y responde SOLO con un JSON válido en este formato exacto:
+{
+  "tipo": "PRODUCTO" | "INFORMACION_GENERAL" | "AMBIGUA",
+  "terminoProducto": "término extraído o null",
+  "sku": "SKU detectado o null",
+  "id": "ID detectado o null",
+  "necesitaMasInfo": true | false,
+  "razon": "breve explicación de la decisión"
+}
+
+REGLAS ESTRICTAS (CRÍTICO - EVITAR FALSOS POSITIVOS):
+1. PRODUCTO: Solo si hay término ESPECÍFICO de producto (nombre concreto, SKU, ID)
+   - "tienen mochilas?" → PRODUCTO (término: "mochila")
+   - "tienen el K62?" → PRODUCTO (SKU: "K62")
+   - "tienen un producto" → AMBIGUA (NO es específico)
+   - "hola tienen productos" → AMBIGUA (genérico, sin término específico)
+   - "necesito saber si tienen" → AMBIGUA (sin término)
+
+2. INFORMACION_GENERAL: Solo si pregunta explícitamente información de la empresa
+   - "horarios", "dirección", "contacto", "pagos", "garantía"
+
+3. AMBIGUA: Cuando el mensaje es genérico sin término específico
+   - "tienen un producto" → AMBIGUA
+   - "hola tienen productos" → AMBIGUA
+   - "necesito saber si tienen" → AMBIGUA
+   - "cuál es su precio" (sin contexto) → AMBIGUA
+
+4. Extracción de términos:
+   - NO extraigas términos genéricos como "producto", "productos", "artículo"
+   - Solo extrae nombres específicos: "mochila", "bolígrafo", "llavero"
+   - Si el término es genérico, marca tipo: "AMBIGUA"
+
+5. SKU/ID: Solo si son explícitos y claros
+   - "K62", "L02", "601050020" → SKU válido
+   - NO inventes SKUs que no estén en el mensaje
+
+6. CONSERVADOR: Si hay duda, marca AMBIGUA con necesitaMasInfo: true
+
+Ejemplos:
+- "tienen mochilas?" → {"tipo":"PRODUCTO","terminoProducto":"mochila","sku":null,"id":null,"necesitaMasInfo":false,"razon":"Consulta de producto con término específico"}
+- "necesito saber si tienen un producto" → {"tipo":"AMBIGUA","terminoProducto":null,"sku":null,"id":null,"necesitaMasInfo":true,"razon":"Consulta genérica sin término de producto específico"}
+- "tienen el producto K62?" → {"tipo":"PRODUCTO","terminoProducto":"K62","sku":"K62","id":null,"necesitaMasInfo":false,"razon":"Consulta de producto con SKU explícito"}
+- "cuál es su precio" → {"tipo":"PRODUCTO","terminoProducto":null,"sku":null,"id":null,"necesitaMasInfo":true,"razon":"Consulta ambigua, necesita contexto del historial"}
+- "horarios de atención" → {"tipo":"INFORMACION_GENERAL","terminoProducto":null,"sku":null,"id":null,"necesitaMasInfo":false,"razon":"Consulta de información general"}
+
+Respuesta (SOLO el JSON, sin explicaciones adicionales):`
+
+    const response = await client.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'system',
+          content: 'Eres un analizador de intenciones. Analiza mensajes y responde SOLO con JSON válido. No agregues explicaciones fuera del JSON.'
+        },
+        {
+          role: 'user',
+          content: analysisPrompt
+        }
+      ],
+      temperature: 0.1, // Baja temperatura para respuestas más determinísticas
+      max_tokens: 200,
+      response_format: { type: 'json_object' } // Forzar formato JSON
+    })
+
+    const resultado = response.choices[0]?.message?.content?.trim() || ''
+    
+    try {
+      const analisis = JSON.parse(resultado)
+      
+      // VALIDACIONES ESTRICTAS para evitar falsos positivos
+      // 1. Validar que el tipo sea uno de los permitidos
+      if (!['PRODUCTO', 'INFORMACION_GENERAL', 'AMBIGUA'].includes(analisis.tipo)) {
+        console.error(`[IA] ⚠️ Tipo inválido de OpenAI: "${analisis.tipo}" → Forzando AMBIGUA`)
+        analisis.tipo = 'AMBIGUA'
+        analisis.necesitaMasInfo = true
+      }
+      
+      // 2. Validar que si es PRODUCTO, tenga término o SKU/ID
+      if (analisis.tipo === 'PRODUCTO' && !analisis.terminoProducto && !analisis.sku && !analisis.id) {
+        console.error(`[IA] ⚠️ PRODUCTO sin término/SKU/ID → Forzando AMBIGUA para evitar búsqueda genérica`)
+        analisis.tipo = 'AMBIGUA'
+        analisis.necesitaMasInfo = true
+      }
+      
+      // 3. Validar que SKU/ID no sean strings vacíos o solo espacios
+      if (analisis.sku && typeof analisis.sku === 'string' && analisis.sku.trim().length === 0) {
+        analisis.sku = null
+      }
+      if (analisis.id && typeof analisis.id === 'string' && analisis.id.trim().length === 0) {
+        analisis.id = null
+      }
+      
+      // 4. Validar que término de producto no sea genérico
+      const terminosGenericos = ['producto', 'productos', 'articulo', 'articulos', 'artículo', 'artículos', 'item', 'items']
+      if (analisis.terminoProducto && terminosGenericos.includes(analisis.terminoProducto.toLowerCase().trim())) {
+        console.error(`[IA] ⚠️ Término genérico detectado: "${analisis.terminoProducto}" → Forzando AMBIGUA`)
+        analisis.tipo = 'AMBIGUA'
+        analisis.terminoProducto = null
+        analisis.necesitaMasInfo = true
+      }
+      
+      // 5. Si es AMBIGUA, forzar necesitaMasInfo a true
+      if (analisis.tipo === 'AMBIGUA') {
+        analisis.necesitaMasInfo = true
+      }
+      
+      console.log(`[IA] ✅ Análisis de intención validado: tipo=${analisis.tipo}, término=${analisis.terminoProducto || 'N/A'}, SKU=${analisis.sku || 'N/A'}, necesitaMásInfo=${analisis.necesitaMasInfo}`)
+      return analisis
+    } catch (parseError) {
+      console.error(`[IA] ❌ Error parseando JSON de análisis:`, parseError.message)
+      console.error(`[IA] Respuesta recibida:`, resultado)
+      // Fallback: retornar análisis conservador
+      return {
+        tipo: 'AMBIGUA',
+        terminoProducto: null,
+        sku: null,
+        id: null,
+        necesitaMasInfo: true,
+        razon: 'Error al analizar, se requiere más información'
+      }
+    }
+    
+  } catch (error) {
+    console.error(`[IA] ❌ Error analizando intención:`, error.message)
+    // Fallback: retornar análisis conservador
+    return {
+      tipo: 'AMBIGUA',
+      terminoProducto: null,
+      sku: null,
+      id: null,
+      necesitaMasInfo: true,
+      razon: 'Error al analizar, se requiere más información'
+    }
+  }
 }
 
 /**
@@ -428,5 +605,6 @@ export default {
   getOpenAIClient,
   redactarRespuesta,
   detectarSkuNumerico,
+  analizarIntencionConsulta,
   isConfigured
 }
