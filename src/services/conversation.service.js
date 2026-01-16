@@ -1882,6 +1882,22 @@ export async function processMessageWithAI(userId, message) {
     // queryType ya fue decidido por OpenAI o regex arriba
     
     if (queryType === 'INFORMACION_GENERAL') {
+      // VALIDACIÓN CRÍTICA: Verificar que NO sea un saludo mal clasificado
+      const normalizedMessage = normalizeSearchText(message).toLowerCase().trim()
+      const isGreeting = /^(hola|hi|hello|buenos\s+dias|buenas\s+tardes|buenas\s+noches|buen\s+dia|buen\s+día|hey|saludos)/i.test(message) && 
+        (normalizedMessage.length < 25 || /^(hola|hi|hello|buenos|buenas|hey|saludos)[\s!.,]*$/i.test(message))
+      
+      if (isGreeting) {
+        // Es un saludo, no información general - responder como saludo
+        console.log(`[WooCommerce] ⚠️ Saludo detectado en INFORMACION_GENERAL → Corrigiendo a saludo genérico`)
+        return createResponse(
+          '¡Hola! 👋 ¿En qué puedo ayudarte hoy? Si tienes alguna pregunta sobre nuestros productos o servicios, no dudes en decírmelo.',
+          session.state,
+          null,
+          cart
+        )
+      }
+      
       // Consulta de información general - el backend ya tiene la info
       const companyInfo = companyInfoService.formatCompanyInfoForAgent()
       // Obtener historial reciente para contexto
@@ -1892,7 +1908,28 @@ export async function processMessageWithAI(userId, message) {
 Información de la empresa disponible:
 ${companyInfo}${historyContext}
 
-Responde de forma breve (máximo 3-4 líneas), profesional y cercana, estilo WhatsApp.`
+🎯 OBJETIVO:
+Responde de forma apropiada según la consulta del cliente. Usa tu criterio para determinar:
+- Si la consulta es simple (ej: "horarios"), sé breve y directo
+- Si la consulta requiere más detalle (ej: "cómo realizar un pedido"), proporciona información completa
+- Adapta el tono según el contexto de la conversación
+
+✅ DATOS QUE DEBES USAR:
+- Usa SOLO la información proporcionada arriba sobre la empresa
+- Si la información no está disponible, dilo claramente
+- Si la consulta es solo un saludo o muy genérica, responde amigablemente sin dar información no solicitada
+
+💡 LIBERTAD PARA REDACTAR:
+- Puedes variar la longitud según la complejidad de la consulta
+- Puedes priorizar información más relevante para la pregunta específica
+- Puedes ser más conversacional o formal según el contexto
+- Puedes ofrecer información adicional relacionada si es útil
+
+🚫 RESTRICCIONES:
+- NO inventes información que no esté en la base de conocimiento proporcionada
+- NO ofrezcas funciones que no existen (reservas, carrito)
+- NO reveles procesos técnicos internos
+- NO respondas con información de empresa si la consulta es solo un saludo genérico`
       
     } else if (queryType === 'VARIANTE') {
       // Consulta sobre variante específica (color, tamaño, etc.)
