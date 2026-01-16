@@ -1884,10 +1884,13 @@ export async function processMessageWithAI(userId, message) {
     if (queryType === 'INFORMACION_GENERAL') {
       // Consulta de información general - el backend ya tiene la info
       const companyInfo = companyInfoService.formatCompanyInfoForAgent()
-      textoParaIA = `Redacta una respuesta clara y formal en español chileno para la siguiente consulta del cliente: "${message}". 
+      // Obtener historial reciente para contexto
+      const historyContext = getHistoryContext(session)
+      
+      textoParaIA = `Redacta una respuesta clara y profesional en español chileno para la siguiente consulta del cliente: "${message}". 
       
 Información de la empresa disponible:
-${companyInfo}
+${companyInfo}${historyContext}
 
 Responde de forma breve (máximo 3-4 líneas), profesional y cercana, estilo WhatsApp.`
       
@@ -2089,10 +2092,7 @@ INSTRUCCIONES OBLIGATORIAS:
         const confidenceLevel = providedExplicitSku || providedExplicitId ? 'ALTA (identificación exacta)' : 'MEDIA (coincidencia por nombre)'
         
         // Obtener historial reciente para contexto
-        const recentHistory = session.history?.slice(-4) || []
-        const historyContext = recentHistory.length > 0 
-          ? `\n\nCONTEXTO DE CONVERSACIÓN RECIENTE:\n${recentHistory.map(msg => `- ${msg.sender === 'user' ? 'Cliente' : 'Bot'}: ${(msg.message || msg.text || '').substring(0, 100)}`).join('\n')}`
-          : ''
+        const historyContext = getHistoryContext(session)
         
         textoParaIA = `Redacta una respuesta clara y profesional en español chileno para el cliente.
 
@@ -2168,12 +2168,9 @@ INSTRUCCIONES OBLIGATORIAS:
           }).join('\n')
           
           // Obtener historial reciente para contexto
-          const recentHistory = session.history?.slice(-4) || []
-          const historyContext = recentHistory.length > 0 
-            ? `\n\nCONTEXTO DE CONVERSACIÓN RECIENTE:\n${recentHistory.map(msg => `- ${msg.sender === 'user' ? 'Cliente' : 'Bot'}: ${(msg.message || msg.text || '').substring(0, 100)}`).join('\n')}`
-            : ''
+          const historyContext = getHistoryContext(session)
           
-          textoParaIA = `Redacta una respuesta clara y formal en español chileno informando al cliente sobre los productos encontrados.
+          textoParaIA = `Redacta una respuesta clara y profesional en español chileno informando al cliente sobre los productos encontrados.
 
 PRODUCTOS ENCONTRADOS (información real de WooCommerce, matching determinístico - alta confianza):
 ${productsList}
@@ -2306,7 +2303,7 @@ INSTRUCCIONES OBLIGATORIAS:
       // Otra consulta (queryType no es INFORMACION_GENERAL, PRODUCTOS, VARIANTE, CARACTERISTICAS ni FALLBACK)
       // Esto solo debería ocurrir si queryType es 'OTRO' o un valor inesperado
       // Por seguridad, tratarlo como consulta genérica
-      textoParaIA = `Redacta una respuesta clara y formal en español chileno para la siguiente consulta del cliente: "${message}".
+      textoParaIA = `Redacta una respuesta clara y profesional en español chileno para la siguiente consulta del cliente: "${message}".
 
 Responde de forma breve (máximo 3-4 líneas), profesional y cercana, estilo WhatsApp.`
     } // Cierra el if (queryType === 'INFORMACION_GENERAL') / else if (queryType === 'VARIANTE') / else if (queryType === 'CARACTERISTICAS') / else if (queryType === 'PRODUCTOS') / else
