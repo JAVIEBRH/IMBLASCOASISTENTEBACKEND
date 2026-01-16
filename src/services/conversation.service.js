@@ -334,6 +334,64 @@ function createResponse(message, state, options = null, cart = null) {
 }
 
 /**
+ * Obtener contexto de historial reciente formateado para prompts de IA
+ * @param {Object} session - Sesión del usuario
+ * @param {number} limit - Número de mensajes recientes a incluir (default: 4)
+ * @returns {string} - Contexto formateado o string vacío
+ */
+function getHistoryContext(session, limit = 4) {
+  const recentHistory = session.history?.slice(-limit) || []
+  if (recentHistory.length === 0) return ''
+  
+  return `\n\nCONTEXTO DE CONVERSACIÓN RECIENTE:\n${recentHistory.map(msg => 
+    `- ${msg.sender === 'user' ? 'Cliente' : 'Bot'}: ${(msg.message || msg.text || '').substring(0, 100)}`
+  ).join('\n')}`
+}
+
+/**
+ * Formatear información de stock de un producto
+ * @param {Object} product - Producto con stock_quantity y stock_status
+ * @returns {string} - Información de stock formateada
+ */
+function formatStockInfo(product) {
+  if (product.stock_quantity !== null && product.stock_quantity !== undefined) {
+    const stockQty = parseInt(product.stock_quantity)
+    return stockQty > 0 
+      ? `${stockQty} unidad${stockQty !== 1 ? 'es' : ''}`
+      : 'sin stock'
+  }
+  return product.stock_status === 'instock' ? 'disponible' : 'sin stock'
+}
+
+/**
+ * Formatear lista de productos para prompts de IA
+ * @param {Array} products - Array de productos o items con productos
+ * @param {Object} options - Opciones de formateo
+ * @returns {string} - Lista de productos formateada
+ */
+function formatProductsList(products, options = {}) {
+  const {
+    includeVariants = false,
+    variantAttribute = null,
+    variantValues = null,
+    startIndex = 1
+  } = options
+  
+  return products.map((item, index) => {
+    const p = item.product || item
+    const stockInfo = formatStockInfo(p)
+    const baseInfo = `${index + startIndex}. ${p.name}${p.sku ? ` (SKU: ${p.sku})` : ''}${p.price ? ` - $${parseFloat(p.price).toLocaleString('es-CL')}` : ''} - Stock: ${stockInfo}`
+    
+    if (includeVariants && variantAttribute && variantValues) {
+      const variantsStr = Array.isArray(variantValues) ? variantValues.join(', ') : variantValues
+      return `${baseInfo}\n   ${variantAttribute.charAt(0).toUpperCase() + variantAttribute.slice(1)}s disponibles: ${variantsStr}`
+    }
+    
+    return baseInfo
+  }).join(includeVariants ? '\n\n' : '\n')
+}
+
+/**
  * Inicializar chat para usuario (ASYNC)
  */
 export async function initChat(userId) {
