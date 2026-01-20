@@ -326,10 +326,16 @@ function isLunchHoursQuery(message) {
     // Patrones con "hora" + "almuerzo" (en cualquier orden)
     /hora.*almuerzo|almuerzo.*hora/i,
     
-    // Patrones con "colación"
+    // Patrones con "colación" - REFORZADOS para capturar todas las variaciones
     /colaci[oó]n/i,
-    /(atienden|atendemos|atendeis).*colaci[oó]n/i,
-    /colaci[oó]n.*(atienden|atendemos|atendeis)/i,
+    /(atienden|atendemos|atendeis|se\s+atiende|se\s+atende).*colaci[oó]n/i,
+    /colaci[oó]n.*(atienden|atendemos|atendeis|se\s+atiende|se\s+atende)/i,
+    /hora\s+de\s+colaci[oó]n/i,
+    /horario.*colaci[oó]n|colaci[oó]n.*horario/i,
+    /(durante|en|a\s+la\s+hora\s+de|en\s+la\s+hora\s+de).*colaci[oó]n/i,
+    /colaci[oó]n.*(durante|en|a\s+la\s+hora|en\s+la\s+hora)/i,
+    /horario\s+de\s+atencion.*colaci[oó]n|colaci[oó]n.*horario\s+de\s+atencion/i,
+    /atencion.*colaci[oó]n|colaci[oó]n.*atencion/i,
     
     // Patrones con preguntas directas
     /(atienden|atendemos|atendeis)\s+a\s+la\s+hora\s+de\s+almuerzo/i,
@@ -340,6 +346,8 @@ function isLunchHoursQuery(message) {
     // Patrones con "si" (preguntas condicionales)
     /si\s+(atienden|atendemos|atendeis).*almuerzo/i,
     /si\s+se\s+(atiende|atende).*almuerzo/i,
+    /si\s+(atienden|atendemos|atendeis).*colaci[oó]n/i,
+    /si\s+se\s+(atiende|atende).*colaci[oó]n/i,
   ];
   
   return lunchSpecificPatterns.some(pattern => pattern.test(text));
