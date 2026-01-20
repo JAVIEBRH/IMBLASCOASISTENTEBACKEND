@@ -145,52 +145,56 @@ function checkResponseIsCorrect(responseText) {
   
   const lowerResponse = responseText.toLowerCase()
   
-  // PRIMERO: Verificar que contenga palabras correctas (que NO se atiende)
-  // Esto tiene prioridad porque la respuesta puede empezar con "Atendemos..." pero luego decir "NO atendemos durante..."
+  // PRIMERO Y MÁS IMPORTANTE: Verificar que contenga palabras correctas (que NO se atiende)
+  // Esto tiene máxima prioridad porque la respuesta puede empezar con "Atendemos..." pero luego decir "NO atendemos durante..."
   const hasCorrectKeywords = CORRECT_RESPONSE_KEYWORDS.some(keyword => 
     lowerResponse.includes(keyword.toLowerCase())
   )
   
-  if (!hasCorrectKeywords) {
-    // Si no tiene palabras correctas, verificar si tiene palabras incorrectas
-    const hasIncorrectKeywords = INCORRECT_RESPONSE_KEYWORDS.some(keyword => 
-      lowerResponse.includes(keyword.toLowerCase())
-    )
-    
-    if (hasIncorrectKeywords) {
-      return { 
-        isCorrect: false, 
-        reason: 'Respuesta contiene palabras que indican que SÍ se atiende durante el almuerzo (INCORRECTO)' 
-      }
-    }
+  // Si tiene palabras correctas (como "no atendemos durante"), es CORRECTO
+  // Incluso si tiene "atendemos" en otra parte del texto (como en el horario general)
+  if (hasCorrectKeywords) {
+    // Verificar que mencione el horario específico del almuerzo
+    const mentionsLunchHours = lowerResponse.includes('14:00') && lowerResponse.includes('15:30')
     
     return { 
-      isCorrect: false, 
-      reason: 'Respuesta no contiene palabras clave que indiquen que NO se atiende' 
+      isCorrect: true, 
+      reason: mentionsLunchHours 
+        ? 'Respuesta correcta: menciona que NO se atiende y el horario específico' 
+        : 'Respuesta correcta: menciona que NO se atiende (pero no el horario específico)'
     }
   }
   
-  // Si tiene palabras correctas, verificar que NO tenga palabras incorrectas en contexto de almuerzo
-  // Pero solo si están en el contexto de "durante el almuerzo" o similar
-  const hasIncorrectInLunchContext = INCORRECT_RESPONSE_KEYWORDS.some(keyword => 
+  // Si NO tiene palabras correctas, entonces verificar si tiene palabras incorrectas
+  // Pero solo si están en el contexto específico de "durante el almuerzo" o "durante la colación"
+  const hasIncorrectKeywords = INCORRECT_RESPONSE_KEYWORDS.some(keyword => 
     lowerResponse.includes(keyword.toLowerCase())
   )
   
-  if (hasIncorrectInLunchContext) {
+  if (hasIncorrectKeywords) {
+    // Verificar que NO esté negado cerca (como "no atendemos durante")
+    const hasNegationNearby = lowerResponse.includes('no atendemos') || 
+                              lowerResponse.includes('no se atiende') ||
+                              lowerResponse.includes('no atienden')
+    
+    if (hasNegationNearby) {
+      // Si tiene negación, es correcto
+      return { 
+        isCorrect: true, 
+        reason: 'Respuesta correcta: contiene negación explícita de que NO se atiende' 
+      }
+    }
+    
     return { 
       isCorrect: false, 
       reason: 'Respuesta contiene palabras que indican que SÍ se atiende durante el almuerzo (INCORRECTO)' 
     }
   }
   
-  // Verificar que mencione el horario específico del almuerzo
-  const mentionsLunchHours = lowerResponse.includes('14:00') && lowerResponse.includes('15:30')
-  
+  // Si no tiene ni palabras correctas ni incorrectas específicas, es incorrecto
   return { 
-    isCorrect: true, 
-    reason: mentionsLunchHours 
-      ? 'Respuesta correcta: menciona que NO se atiende y el horario específico' 
-      : 'Respuesta correcta: menciona que NO se atiende (pero no el horario específico)'
+    isCorrect: false, 
+    reason: 'Respuesta no contiene palabras clave que indiquen claramente que NO se atiende durante la hora de almuerzo' 
   }
 }
 
