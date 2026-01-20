@@ -319,6 +319,38 @@ function getSensitiveRefusalMessage() {
   return 'Lo siento, pero no puedo compartir información interna o datos personales. Puedo ayudarte con stock, precios, características u horarios de atención.'
 }
 
+/**
+ * Detectar consultas sobre la hora de almuerzo
+ * @param {string} message - Mensaje del usuario
+ * @returns {boolean}
+ */
+function isLunchHoursQuery(message) {
+  if (!message || typeof message !== 'string') return false;
+  const text = message.toLowerCase();
+  return (
+    text.includes('hora de almuerzo') ||
+    text.includes('horario de almuerzo') ||
+    text.includes('colación') ||
+    text.includes('colacion') ||
+    text.includes('atienden a la hora') ||
+    text.includes('atienden en la hora') ||
+    text.includes('atendemos a la hora') ||
+    text.includes('atendemos en la hora') ||
+    text.includes('atendéis a la hora') ||
+    text.includes('atendéis en la hora') ||
+    (text.includes('atienden') && text.includes('almuerzo')) ||
+    (text.includes('atendemos') && text.includes('almuerzo'))
+  );
+}
+
+/**
+ * Respuesta fija sobre horarios de atención (NO se atiende en hora de almuerzo)
+ * @returns {string}
+ */
+function getLunchHoursResponse() {
+  return 'Atendemos de lunes a viernes de 9:42 a 14:00 y de 15:30 a 19:00 hrs. Los sábados de 10:00 a 13:00 hrs. **No atendemos durante la hora de almuerzo.**';
+}
+
 // Sesiones de usuarios (en memoria, solo para estado conversacional)
 const sessions = new Map()
 
@@ -983,6 +1015,13 @@ export async function processMessageWithAI(userId, message) {
       const refusalMessage = getSensitiveRefusalMessage()
       addToHistory(session, 'bot', refusalMessage)
       return createResponse(refusalMessage, session.state, null, cart)
+    }
+    
+    // Verificación temprana de consultas sobre hora de almuerzo (RESPUESTA FIJA)
+    if (isLunchHoursQuery(message)) {
+      const lunchResponse = getLunchHoursResponse()
+      addToHistory(session, 'bot', lunchResponse)
+      return createResponse(lunchResponse, session.state, null, cart)
     }
     
     // El agente está autenticado con Consumer Key/Secret de WooCommerce
