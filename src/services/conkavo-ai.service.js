@@ -32,6 +32,11 @@ TIPO A – INFORMACIÓN GENERAL
 - Canales de contacto
 - Condiciones comerciales generales
 
+⚠️ REGLA CRÍTICA SOBRE HORARIOS:
+- NO se atiende durante la hora de almuerzo (entre las 14:00 y 15:30 hrs)
+- Si alguien pregunta "¿atienden a la hora de almuerzo?" o cualquier variación similar, debes responder CLARAMENTE que NO se atiende durante ese horario
+- Los horarios son: Lunes a viernes de 9:42 a 14:00 y de 15:30 a 19:00 hrs. Sábados de 10:00 a 13:00 hrs
+
 TIPO B – PRODUCTOS / STOCK / PRECIOS
 - Existencia de productos
 - Cantidades

@@ -288,37 +288,70 @@ function extractProductTerm(message) {
 
 /**
  * Detectar consultas específicas sobre la hora de almuerzo
- * Solo detecta preguntas que mencionen explícitamente "almuerzo" o términos relacionados
- * NO detecta preguntas genéricas sobre horarios (ej: "atienden a la hora de cierre")
+ * DETECCIÓN REFORZADA: Captura todas las variaciones posibles de preguntas sobre hora de almuerzo
+ * Incluye variaciones con/sin acentos, diferentes formas de preguntar, etc.
  * @param {string} message - Mensaje del usuario
  * @returns {boolean}
  */
 function isLunchHoursQuery(message) {
   if (!message || typeof message !== 'string') return false;
-  const text = message.toLowerCase();
+  const text = message.toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, ''); // Normalizar acentos
   
-  // Patrones específicos que requieren mención explícita de "almuerzo" o términos relacionados
+  // Palabras clave que deben aparecer (al menos una)
+  const lunchKeywords = ['almuerzo', 'colacion', 'colación', 'break', 'lunch'];
+  
+  // Verificar si menciona alguna palabra clave relacionada con almuerzo
+  const hasLunchKeyword = lunchKeywords.some(keyword => text.includes(keyword));
+  
+  if (!hasLunchKeyword) return false;
+  
+  // Patrones reforzados que capturan todas las variaciones posibles
   const lunchSpecificPatterns = [
+    // Patrones directos con "almuerzo"
     /hora\s+de\s+almuerzo/i,
     /horario\s+de\s+almuerzo/i,
-    /almuerzo/i, // Si menciona "almuerzo" explícitamente
+    /almuerzo/i,
+    
+    // Patrones con verbos de atención + almuerzo
+    /(atienden|atendemos|atendeis|atenden|atendes|atendemos|atendeis)\s+(durante|en|a\s+la\s+hora\s+de|en\s+la\s+hora\s+de|al\s+momento\s+del)\s+.*almuerzo/i,
+    /(atienden|atendemos|atendeis|atenden|atendes|atendemos|atendeis).*almuerzo/i,
+    /almuerzo.*(atienden|atendemos|atendeis|atenden|atendes)/i,
+    
+    // Patrones con preguntas sobre atención
+    /(se\s+atiende|se\s+atende|atienden|atendemos|atendeis)\s+(durante|en|a\s+la\s+hora\s+de|en\s+la\s+hora\s+de)\s+.*almuerzo/i,
+    /(se\s+atiende|se\s+atende|atienden|atendemos|atendeis).*almuerzo/i,
+    
+    // Patrones con "hora" + "almuerzo" (en cualquier orden)
+    /hora.*almuerzo|almuerzo.*hora/i,
+    
+    // Patrones con "colación"
     /colaci[oó]n/i,
-    /atienden\s+(durante|en|a\s+la\s+hora\s+de)\s+.*almuerzo/i,
-    /atendemos\s+(durante|en|a\s+la\s+hora\s+de)\s+.*almuerzo/i,
-    /atend[eé]is\s+(durante|en|a\s+la\s+hora\s+de)\s+.*almuerzo/i,
-    /(atienden|atendemos|atend[eé]is).*almuerzo/i, // Cualquier combinación con "almuerzo"
-    /almuerzo.*(atienden|atendemos|atend[eé]is)/i, // "almuerzo" antes o después
+    /(atienden|atendemos|atendeis).*colaci[oó]n/i,
+    /colaci[oó]n.*(atienden|atendemos|atendeis)/i,
+    
+    // Patrones con preguntas directas
+    /(atienden|atendemos|atendeis)\s+a\s+la\s+hora\s+de\s+almuerzo/i,
+    /(atienden|atendemos|atendeis)\s+en\s+la\s+hora\s+de\s+almuerzo/i,
+    /(atienden|atendemos|atendeis)\s+durante\s+el\s+almuerzo/i,
+    /(atienden|atendemos|atendeis)\s+durante\s+la\s+hora\s+de\s+almuerzo/i,
+    
+    // Patrones con "si" (preguntas condicionales)
+    /si\s+(atienden|atendemos|atendeis).*almuerzo/i,
+    /si\s+se\s+(atiende|atende).*almuerzo/i,
   ];
   
   return lunchSpecificPatterns.some(pattern => pattern.test(text));
 }
 
 /**
- * Respuesta fija sobre horarios de atención (NO se atiende en hora de almuerzo)
+ * Respuesta fija y ENFÁTICA sobre horarios de atención
+ * RESPUESTA REFORZADA: Debe ser clara que NO se atiende durante la hora de almuerzo
  * @returns {string}
  */
 function getLunchHoursResponse() {
-  return 'Atendemos de lunes a viernes de 9:42 a 14:00 y de 15:30 a 19:00 hrs. Los sábados de 10:00 a 13:00 hrs. **No atendemos durante la hora de almuerzo.**';
+  return 'Atendemos de lunes a viernes de 9:42 a 14:00 y de 15:30 a 19:00 hrs. Los sábados de 10:00 a 13:00 hrs.\n\n⚠️ **IMPORTANTE: NO atendemos durante la hora de almuerzo (entre las 14:00 y 15:30 hrs).**';
 }
 
 // Sesiones de usuarios (en memoria, solo para estado conversacional)
