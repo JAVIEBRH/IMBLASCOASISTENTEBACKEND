@@ -2327,8 +2327,29 @@ INSTRUCCIONES OBLIGATORIAS:
         // Se encontró información del producto en WooCommerce
         // Construir información de stock más detallada
         // CRÍTICO: Siempre mostrar stock, incluso si es 0
+        // Si es un producto variable con variaciones, el stock del producto principal puede ser null
+        // porque el stock real está en las variaciones
+        const isVariation = productStockData.is_variation
+        const hasVariations = context.productVariations && context.productVariations.length > 0 && !isVariation
+        
         let stockInfo = ''
-        if (productStockData.stock_quantity !== null && productStockData.stock_quantity !== undefined) {
+        // Si tiene variaciones, el stock del producto principal puede ser null (stock gestionado por variaciones)
+        // En ese caso, calcular el stock total sumando las variaciones
+        if (hasVariations) {
+          // Calcular stock total sumando las variaciones
+          const totalStock = context.productVariations.reduce((sum, v) => {
+            const vStock = v.stock_quantity !== null && v.stock_quantity !== undefined 
+              ? parseInt(v.stock_quantity) 
+              : 0
+            return sum + (vStock > 0 ? vStock : 0)
+          }, 0)
+          
+          if (totalStock > 0) {
+            stockInfo = `${totalStock} unidad${totalStock !== 1 ? 'es' : ''} disponible${totalStock > 1 ? 's' : ''} (suma de variaciones)`
+          } else {
+            stockInfo = 'Stock agotado (0 unidades)'
+          }
+        } else if (productStockData.stock_quantity !== null && productStockData.stock_quantity !== undefined) {
           // Si stock_quantity está definido, usarlo siempre
           if (productStockData.stock_quantity > 0) {
             stockInfo = `${productStockData.stock_quantity} unidad${productStockData.stock_quantity > 1 ? 'es' : ''} disponible${productStockData.stock_quantity > 1 ? 's' : ''}`
@@ -2352,14 +2373,13 @@ INSTRUCCIONES OBLIGATORIAS:
           : 'Precio no disponible'
         
         // Si es una variación, incluir información del producto padre
-        const isVariation = productStockData.is_variation
         const parentInfo = isVariation && productStockData.parent_product 
           ? `\n- Producto padre: ${productStockData.parent_product.name}`
           : ''
         
         // Si hay variaciones disponibles (producto variable), incluirlas
         let variationsInfo = ''
-        if (context.productVariations && context.productVariations.length > 0 && !isVariation) {
+        if (hasVariations) {
           const variationsList = context.productVariations.slice(0, 5).map(v => {
             const vStock = v.stock_quantity !== null && v.stock_quantity !== undefined
               ? `${v.stock_quantity} unidad${v.stock_quantity !== 1 ? 'es' : ''}`
