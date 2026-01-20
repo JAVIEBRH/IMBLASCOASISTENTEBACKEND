@@ -120,10 +120,12 @@ export function parseWooCommerceCSV(csvContent, encoding = 'utf8') {
           return
         }
 
-        // Parsear stock
-        const stock = parseInt(stockRaw.toString().replace(/[^\d-]/g, ''), 10)
+        // Parsear stock (solo valores positivos o cero)
+        const stockRawStr = stockRaw.toString().trim()
+        // Remover todo excepto dígitos (no permitir negativos)
+        const stock = parseInt(stockRawStr.replace(/[^\d]/g, ''), 10)
         if (isNaN(stock) || stock < 0) {
-          errors.push(`Línea ${idx + 2}: Stock inválido para ${sku} (valor: ${stockRaw})`)
+          errors.push(`Línea ${idx + 2}: Stock inválido para ${sku} (valor: ${stockRaw}). El stock debe ser un número positivo o cero.`)
           return
         }
 
