@@ -980,6 +980,14 @@ export async function processMessageWithAI(userId, message) {
     // Agregar mensaje del usuario al historial
     addToHistory(session, 'user', message)
     
+    // Verificación temprana de consultas específicas sobre hora de almuerzo (RESPUESTA FIJA)
+    // Esta verificación debe ser ANTES del procesamiento con IA para evitar respuestas incorrectas
+    if (isLunchHoursQuery(message)) {
+      const lunchResponse = getLunchHoursResponse()
+      addToHistory(session, 'bot', lunchResponse)
+      return createResponse(lunchResponse, session.state, null, cart)
+    }
+    
     // El agente está autenticado con Consumer Key/Secret de WooCommerce
     // Puede consultar stock sin necesidad de que el usuario final esté logueado
     const isLoggedIn = true // El agente está autenticado
