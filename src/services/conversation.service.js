@@ -69,7 +69,7 @@ function normalizeSearchText(text) {
 }
 
 /**
- * Normalizar códigos/SKU (N35 = N-35 = N 35 = N.35)
+ * Normalizar códigos/SKU (N35 = N-35 = N 35 = N.35 = N3,5 = N3?)
  * @param {string} code - Código/SKU a normalizar
  * @returns {string} - Código normalizado
  */
@@ -365,73 +365,17 @@ function getLunchHoursResponse() {
 // Sesiones de usuarios (en memoria, solo para estado conversacional)
 const sessions = new Map()
 
-// Constantes para gestión de sesiones
-const SESSION_TTL_MS = 24 * 60 * 60 * 1000 // 24 horas de inactividad
-const MAX_SESSIONS = 1000 // Límite máximo de sesiones en memoria
-
-/**
- * Limpiar sesiones inactivas (TTL) y limitar número máximo
- */
-function cleanupSessions() {
-  const now = Date.now()
-  const sessionsToDelete = []
-  
-  // Encontrar sesiones inactivas o exceder límite
-  for (const [userId, session] of sessions.entries()) {
-    const inactiveTime = now - session.lastActivity
-    if (inactiveTime > SESSION_TTL_MS) {
-      sessionsToDelete.push(userId)
-    }
-  }
-  
-  // Si aún hay espacio, eliminar las más antiguas primero
-  if (sessions.size >= MAX_SESSIONS) {
-    const sortedSessions = Array.from(sessions.entries())
-      .map(([userId, session]) => ({ userId, lastActivity: session.lastActivity }))
-      .sort((a, b) => a.lastActivity - b.lastActivity) // Más antiguas primero
-    
-    const toDelete = sessions.size - MAX_SESSIONS + 1 // +1 para dejar espacio
-    for (let i = 0; i < toDelete && i < sortedSessions.length; i++) {
-      if (!sessionsToDelete.includes(sortedSessions[i].userId)) {
-        sessionsToDelete.push(sortedSessions[i].userId)
-      }
-    }
-  }
-  
-  // Eliminar sesiones
-  if (sessionsToDelete.length > 0) {
-    sessionsToDelete.forEach(userId => {
-      sessions.delete(userId)
-      console.log(`[Session] 🗑️ Sesión ${userId} eliminada (inactiva o límite alcanzado)`)
-    })
-    console.log(`[Session] 🧹 Limpieza: ${sessionsToDelete.length} sesión(es) eliminada(s), ${sessions.size} activa(s)`)
-  }
-}
-
-// Ejecutar limpieza cada hora
-setInterval(cleanupSessions, 60 * 60 * 1000)
-
 /**
  * Obtener o crear sesión de usuario
  */
 function getSession(userId) {
-  // Limpiar sesiones antes de crear nueva (si está cerca del límite)
-  if (sessions.size >= MAX_SESSIONS * 0.9) {
-    cleanupSessions()
-  }
-  
   if (!sessions.has(userId)) {
     sessions.set(userId, {
       userId,
       state: STATES.IDLE,
       currentProduct: null,
-      history: [],
-      lastActivity: Date.now(),
-      createdAt: Date.now()
+      history: []
     })
-  } else {
-    // Actualizar última actividad
-    sessions.get(userId).lastActivity = Date.now()
   }
   return sessions.get(userId)
 }
@@ -440,19 +384,13 @@ function getSession(userId) {
  * Guardar mensaje en historial
  */
 function addToHistory(session, sender, message) {
-  // Actualizar última actividad al agregar mensaje
-  session.lastActivity = Date.now()
-  
   session.history.push({
     sender,
     message,
     timestamp: new Date().toISOString()
   })
-  
-  // Limitar historial a 50 mensajes para evitar memory leak
-  const MAX_HISTORY = 50
-  if (session.history.length > MAX_HISTORY) {
-    session.history = session.history.slice(-MAX_HISTORY)
+  if (session.history.length > 50) {
+    session.history = session.history.slice(-50)
   }
 }
 
@@ -1114,9 +1052,7 @@ export async function processMessageWithAI(userId, message) {
     // 3. Backend ejecuta según decisión de OpenAI
     // ============================================
     
-    // Regex simplificado: captura SKU alfanumérico (letras, números, guiones) después de "sku:" o "sku "
-    // El regex captura solo caracteres válidos, sin necesidad de lookahead complejo
-    const explicitSkuMatch = message.match(/(?:sku|SKU)[:\s]+([A-Za-z0-9\-]+)/i)
+    const explicitSkuMatch = message.match(/(?:sku|SKU)[:\s]+([^\s]+)/i)
     const explicitIdMatch = message.match(/(?:id|ID)[:\s]+(\d+)/i)
     
     let providedExplicitSku = null
@@ -1127,17 +1063,10 @@ export async function processMessageWithAI(userId, message) {
     // Si hay SKU/ID explícito por regex, usarlo directamente (rápido, sin IA)
     if (explicitSkuMatch) {
       const rawSku = explicitSkuMatch[1].trim()
-      // Normalizar inmediatamente para remover signos de interrogación y otros caracteres especiales
+      // Normalizar inmediatamente para remover caracteres especiales (?, !, ,, etc.)
       providedExplicitSku = normalizeCode(rawSku)
-      
-      // Validación: si después de normalizar está vacío o tiene caracteres inválidos, delegar a OpenAI
-      if (!providedExplicitSku || providedExplicitSku.length === 0) {
-        console.log(`[WooCommerce] ⚠️ SKU normalizado vacío después de regex, delegando a OpenAI...`)
-        providedExplicitSku = null // Forzar que OpenAI lo maneje
-      } else {
-        queryType = 'PRODUCTOS'
-        console.log(`[WooCommerce] 🔍 SKU explícito detectado: "${rawSku}" → normalizado: "${providedExplicitSku}" → Consulta directa sin análisis de IA`)
-      }
+      queryType = 'PRODUCTOS'
+      console.log(`[WooCommerce] 🔍 SKU explícito detectado: "${rawSku}" → normalizado: "${providedExplicitSku}" → Consulta directa sin análisis de IA`)
     }
     if (explicitIdMatch) {
       providedExplicitId = explicitIdMatch[1].trim()
@@ -1331,26 +1260,20 @@ export async function processMessageWithAI(userId, message) {
           
           // Buscar SKU numérico largo (ej: "601059110", "601050020") - sin restricción de longitud de mensaje
           // Los SKUs numéricos largos (6+ dígitos) son muy específicos y deben detectarse siempre
-          // CRÍTICO: Normalizar inmediatamente para remover signos de interrogación
           if (detectedSkus.length === 0) {
             const numericSkuMatch = message.match(/\b(\d{6,})\b/)
             if (numericSkuMatch) {
-              const rawSku = numericSkuMatch[1].trim()
-              const normalizedNumericSku = normalizeCode(rawSku) // Normalizar por si tiene caracteres especiales
-              detectedSkus.push(normalizedNumericSku)
-              console.log(`[WooCommerce] 🔍 SKU numérico largo detectado: "${rawSku}" → normalizado: "${normalizedNumericSku}"`)
+              detectedSkus.push(numericSkuMatch[1].trim())
+              console.log(`[WooCommerce] 🔍 SKU numérico largo detectado: "${numericSkuMatch[1]}"`)
             }
           }
         }
         
-        // Usar el primer SKU detectado y normalizarlo
+        // Usar el primer SKU detectado
         if (detectedSkus.length > 0) {
-          // CRÍTICO: Normalizar el SKU detectado para remover signos de interrogación y otros caracteres especiales
-          providedExplicitSku = normalizeCode(detectedSkus[0])
+          providedExplicitSku = detectedSkus[0]
           if (detectedSkus.length > 1) {
-            console.log(`[WooCommerce] ⚠️  Múltiples SKUs detectados: ${detectedSkus.join(', ')}. Buscando el primero normalizado: "${providedExplicitSku}"`)
-          } else {
-            console.log(`[WooCommerce] 🔍 SKU detectado y normalizado: "${detectedSkus[0]}" → "${providedExplicitSku}"`)
+            console.log(`[WooCommerce] ⚠️  Múltiples SKUs detectados: ${detectedSkus.join(', ')}. Buscando el primero: "${providedExplicitSku}"`)
           }
         }
         
@@ -1385,71 +1308,57 @@ export async function processMessageWithAI(userId, message) {
       // Buscar por SKU primero
       if (providedExplicitSku) {
         try {
-          // El SKU ya está normalizado en línea 1130, usar directamente (evitar doble normalización)
+          // El SKU ya está normalizado en línea 1067, usar directamente
           const normalizedSku = providedExplicitSku
           console.log(`[WooCommerce] Buscando SKU normalizado: "${normalizedSku}"`)
           
-          // SIMPLIFICACIÓN: Para SKUs numéricos largos (6+ dígitos), buscar DIRECTAMENTE en WooCommerce
-          // Estos SKUs son exactos y no necesitan variaciones ni búsquedas complejas
-          const isLongNumericSku = /^\d{6,}$/.test(normalizedSku)
-          
-          if (isLongNumericSku) {
-            // SKU numérico largo → Búsqueda DIRECTA en WooCommerce (más rápido y eficiente)
-            console.log(`[WooCommerce] 🔍 SKU numérico largo detectado → Búsqueda directa en WooCommerce API`)
-            try {
-              const directProduct = await wordpressService.getProductStock(normalizedSku)
-              if (directProduct) {
-                productStockData = directProduct
-                context.productStockData = productStockData
-                session.currentProduct = directProduct
-                console.log(`[WooCommerce] ✅ Producto encontrado por SKU directo: ${directProduct.name || 'N/A'} (SKU: ${directProduct.sku || 'N/A'})`)
-                console.log(`   Stock: ${directProduct.stock_quantity !== null ? directProduct.stock_quantity : 'N/A'}, Precio: ${directProduct.price ? '$' + directProduct.price : 'N/A'}`)
-                
-                // Si es un producto variable, cargar variaciones automáticamente
-                if (directProduct.type === 'variable' && directProduct.id) {
-                  console.log(`[WooCommerce] 🔄 Producto variable detectado, cargando variaciones automáticamente...`)
-                  try {
-                    const variations = await wordpressService.getProductVariations(directProduct.id)
-                    if (variations && variations.length > 0) {
-                      context.productVariations = variations
-                      console.log(`[WooCommerce] ✅ ${variations.length} variaciones cargadas para "${directProduct.name}"`)
-                    }
-                  } catch (error) {
-                    console.error(`[WooCommerce] ⚠️ Error cargando variaciones: ${error.message}`)
-                  }
+          const productBySku = await wordpressService.getProductBySku(normalizedSku)
+          if (productBySku) {
+            productStockData = productBySku
+            context.productStockData = productStockData
+            session.currentProduct = productBySku // Guardar para futuras referencias
+            console.log(`[WooCommerce] ✅ Producto encontrado por SKU explícito: ${productBySku.name || 'N/A'} (SKU: ${productBySku.sku || 'N/A'})`)
+            console.log(`   Stock: ${productBySku.stock_quantity !== null ? productBySku.stock_quantity : 'N/A'}, Precio: ${productBySku.price ? '$' + productBySku.price : 'N/A'}`)
+            
+            // Si es un producto variable, cargar variaciones automáticamente
+            if (productBySku.type === 'variable' && productBySku.id) {
+              console.log(`[WooCommerce] 🔄 Producto variable detectado, cargando variaciones automáticamente...`)
+              try {
+                const variations = await wordpressService.getProductVariations(productBySku.id)
+                if (variations && variations.length > 0) {
+                  context.productVariations = variations
+                  console.log(`[WooCommerce] ✅ ${variations.length} variaciones cargadas para "${productBySku.name}"`)
                 }
-              } else {
-                console.log(`[WooCommerce] ❌ No se encontró producto con SKU: "${normalizedSku}"`)
+              } catch (error) {
+                console.error(`[WooCommerce] ⚠️ Error cargando variaciones: ${error.message}`)
               }
-            } catch (error) {
-              console.error(`[WooCommerce] ❌ Error en búsqueda directa por SKU: ${error.message}`)
             }
           } else {
-            // SKU alfanumérico (ej: "N35", "ABA1") → Usar búsqueda con variaciones
-            console.log(`[WooCommerce] 🔍 SKU alfanumérico detectado → Búsqueda con variaciones`)
-            const productBySku = await wordpressService.getProductBySku(normalizedSku)
-            if (productBySku) {
-              productStockData = productBySku
-              context.productStockData = productStockData
-              session.currentProduct = productBySku
-              console.log(`[WooCommerce] ✅ Producto encontrado por SKU: ${productBySku.name || 'N/A'} (SKU: ${productBySku.sku || 'N/A'})`)
-              console.log(`   Stock: ${productBySku.stock_quantity !== null ? productBySku.stock_quantity : 'N/A'}, Precio: ${productBySku.price ? '$' + productBySku.price : 'N/A'}`)
+            console.log(`[WooCommerce] ❌ No se encontró producto con SKU explícito: "${providedExplicitSku}"`)
+            console.log(`   Se omite búsqueda masiva en variaciones para evitar demoras; se intentará localizar por nombre con el código proporcionado.`)
+            try {
+              const allProducts = await wordpressService.getAllProducts()
+              const normalizedSku = normalizeCode(providedExplicitSku)
+              const productsWithCode = allProducts.filter(p => {
+                const productName = normalizeCode(p.name || '')
+                const productSku = normalizeCode(p.sku || '')
+                return productName.includes(normalizedSku) || productSku.includes(normalizedSku)
+              })
               
-              // Si es un producto variable, cargar variaciones automáticamente
-              if (productBySku.type === 'variable' && productBySku.id) {
-                console.log(`[WooCommerce] 🔄 Producto variable detectado, cargando variaciones automáticamente...`)
-                try {
-                  const variations = await wordpressService.getProductVariations(productBySku.id)
-                  if (variations && variations.length > 0) {
-                    context.productVariations = variations
-                    console.log(`[WooCommerce] ✅ ${variations.length} variaciones cargadas para "${productBySku.name}"`)
-                  }
-                } catch (error) {
-                  console.error(`[WooCommerce] ⚠️ Error cargando variaciones: ${error.message}`)
-                }
+              if (productsWithCode.length === 1) {
+                productStockData = productsWithCode[0]
+                context.productStockData = productStockData
+                session.currentProduct = productsWithCode[0] // Guardar para futuras referencias
+                console.log(`[WooCommerce] ✅ Producto encontrado por código en nombre/SKU: ${productStockData.name} (SKU real: ${productStockData.sku || 'N/A'})`)
+              } else if (productsWithCode.length > 1) {
+                productSearchResults = productsWithCode.slice(0, 10) // limitar para no saturar respuestas
+                context.productSearchResults = productSearchResults
+                console.log(`[WooCommerce] ✅ Encontrados ${productsWithCode.length} productos que contienen "${providedExplicitSku}" en nombre/SKU`)
+              } else {
+                console.log(`[WooCommerce] ❌ Tampoco se encontró "${providedExplicitSku}" en nombres/SKU normalizados`)
               }
-            } else {
-              console.log(`[WooCommerce] ❌ No se encontró producto con SKU: "${normalizedSku}"`)
+            } catch (error) {
+              console.log(`[WooCommerce] ⚠️  Error buscando código en nombres/SKU: ${error.message}`)
             }
           }
         } catch (error) {
@@ -2420,72 +2329,11 @@ INSTRUCCIONES OBLIGATORIAS:
         // Se encontró información del producto en WooCommerce
         // Construir información de stock más detallada
         // CRÍTICO: Siempre mostrar stock, incluso si es 0
-        // Si es un producto variable con variaciones, el stock del producto principal puede ser null
-        // porque el stock real está en las variaciones
-        const isVariation = productStockData.is_variation
-        const hasVariations = context.productVariations && context.productVariations.length > 0 && !isVariation
-        
         let stockInfo = ''
-        // En WooCommerce, productos variables pueden tener:
-        // 1. Stock gestionado a nivel de variaciones (producto principal stock_quantity = null)
-        // 2. Stock compartido a nivel del producto principal (todas las variaciones comparten el stock del padre)
-        // Si tiene variaciones Y el producto principal tiene stock_quantity definido, usar el stock del producto principal
-        // Si tiene variaciones Y el producto principal tiene stock_quantity = null, sumar las variaciones
-        if (hasVariations) {
-          // CRÍTICO: Validar manage_stock para determinar si es stock compartido o individual
-          // Si manage_stock = true → Stock compartido (usa stock del producto principal)
-          // Si manage_stock = false → Stock individual (suma de variaciones)
-          const isSharedStock = productStockData.manage_stock === true && 
-                                productStockData.stock_quantity !== null && 
-                                productStockData.stock_quantity !== undefined
-          
-          if (isSharedStock) {
-            // Stock compartido - usar stock del producto principal
-            const mainStock = parseInt(productStockData.stock_quantity)
-            if (isNaN(mainStock)) {
-              console.warn(`[WooCommerce] ⚠️ Stock inválido (NaN) para producto principal ${productStockData.sku || productStockData.id}`)
-              stockInfo = productStockData.stock_status === 'instock' ? 'disponible en stock' : 'Stock agotado (0 unidades)'
-            } else if (mainStock > 0) {
-              stockInfo = `${mainStock} unidad${mainStock !== 1 ? 'es' : ''} disponible${mainStock > 1 ? 's' : ''} (stock compartido entre variaciones)`
-            } else {
-              stockInfo = 'Stock agotado (0 unidades)'
-            }
-          } else {
-            // Stock gestionado por variaciones - calcular suma
-            const totalStock = context.productVariations.reduce((sum, v) => {
-              const vStock = v.stock_quantity !== null && v.stock_quantity !== undefined 
-                ? parseInt(v.stock_quantity) 
-                : 0
-              
-              // Validar que no sea NaN ni negativo
-              if (isNaN(vStock)) {
-                console.warn(`[WooCommerce] ⚠️ Stock inválido (NaN) en variación ${v.sku || v.id}: ${v.stock_quantity}`)
-                return sum
-              }
-              
-              if (vStock < 0) {
-                console.warn(`[WooCommerce] ⚠️ Stock negativo en variación ${v.sku || v.id}: ${v.stock_quantity}`)
-                return sum
-              }
-              
-              return sum + vStock  // Incluir 0 en la suma para consistencia
-            }, 0)
-            
-            if (totalStock > 0) {
-              stockInfo = `${totalStock} unidad${totalStock !== 1 ? 'es' : ''} disponible${totalStock > 1 ? 's' : ''} (suma de variaciones)`
-            } else {
-              stockInfo = 'Stock agotado (0 unidades)'
-            }
-          }
-        } else if (productStockData.stock_quantity !== null && productStockData.stock_quantity !== undefined) {
+        if (productStockData.stock_quantity !== null && productStockData.stock_quantity !== undefined) {
           // Si stock_quantity está definido, usarlo siempre
-          const stockQty = parseInt(productStockData.stock_quantity)
-          
-          if (isNaN(stockQty)) {
-            console.warn(`[WooCommerce] ⚠️ Stock inválido (NaN) para producto ${productStockData.sku || productStockData.id}`)
-            stockInfo = productStockData.stock_status === 'instock' ? 'disponible en stock' : 'Stock agotado (0 unidades)'
-          } else if (stockQty > 0) {
-            stockInfo = `${stockQty} unidad${stockQty !== 1 ? 'es' : ''} disponible${stockQty > 1 ? 's' : ''}`
+          if (productStockData.stock_quantity > 0) {
+            stockInfo = `${productStockData.stock_quantity} unidad${productStockData.stock_quantity > 1 ? 'es' : ''} disponible${productStockData.stock_quantity > 1 ? 's' : ''}`
           } else {
             // Stock es 0: mostrar como agotado
             stockInfo = 'Stock agotado (0 unidades)'
@@ -2506,38 +2354,18 @@ INSTRUCCIONES OBLIGATORIAS:
           : 'Precio no disponible'
         
         // Si es una variación, incluir información del producto padre
+        const isVariation = productStockData.is_variation
         const parentInfo = isVariation && productStockData.parent_product 
           ? `\n- Producto padre: ${productStockData.parent_product.name}`
           : ''
         
         // Si hay variaciones disponibles (producto variable), incluirlas
         let variationsInfo = ''
-        if (hasVariations) {
-          // Determinar si es stock compartido o individual
-          const isSharedStock = productStockData.stock_quantity !== null && productStockData.stock_quantity !== undefined
-          
+        if (context.productVariations && context.productVariations.length > 0 && !isVariation) {
           const variationsList = context.productVariations.slice(0, 5).map(v => {
-            let vStock
-            if (isSharedStock) {
-              // Stock compartido: las variaciones no tienen stock individual
-              vStock = 'stock compartido'
-            } else {
-              // Stock individual por variación
-              if (v.stock_quantity !== null && v.stock_quantity !== undefined) {
-                const stock = parseInt(v.stock_quantity)
-                if (isNaN(stock)) {
-                  console.warn(`[WooCommerce] ⚠️ Stock inválido (NaN) en variación ${v.sku || v.id}: ${v.stock_quantity}`)
-                  vStock = v.stock_status === 'instock' ? 'disponible' : 'sin stock'
-                } else if (stock < 0) {
-                  console.warn(`[WooCommerce] ⚠️ Stock negativo en variación ${v.sku || v.id}: ${v.stock_quantity}`)
-                  vStock = v.stock_status === 'instock' ? 'disponible' : 'sin stock'
-                } else {
-                  vStock = `${stock} unidad${stock !== 1 ? 'es' : ''}`
-                }
-              } else {
-                vStock = v.stock_status === 'instock' ? 'disponible' : 'sin stock'
-              }
-            }
+            const vStock = v.stock_quantity !== null && v.stock_quantity !== undefined
+              ? `${v.stock_quantity} unidad${v.stock_quantity !== 1 ? 'es' : ''}`
+              : v.stock_status === 'instock' ? 'disponible' : 'sin stock'
             const vPrice = v.price ? `$${parseFloat(v.price).toLocaleString('es-CL')}` : 'Precio N/A'
             return `  - ${v.name}${v.sku ? ` (SKU: ${v.sku})` : ''} - ${vStock} - ${vPrice}`
           }).join('\n')
