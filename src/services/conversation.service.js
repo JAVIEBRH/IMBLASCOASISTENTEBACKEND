@@ -78,7 +78,7 @@ function normalizeCode(code) {
   
   return code
     .toUpperCase()
-    .replace(/[-.\s_]/g, '')               // Eliminar guiones, puntos, espacios, guiones bajos
+    .replace(/[?¿!¡.,;:()\[\]{}'"\s_-]/g, '')  // Eliminar signos de interrogación, exclamación, puntuación, espacios, guiones
     .trim()
 }
 
@@ -1114,7 +1114,9 @@ export async function processMessageWithAI(userId, message) {
     // 3. Backend ejecuta según decisión de OpenAI
     // ============================================
     
-    const explicitSkuMatch = message.match(/(?:sku|SKU)[:\s]+([^\s]+)/i)
+    // Regex simplificado: captura SKU alfanumérico (letras, números, guiones) después de "sku:" o "sku "
+    // El regex captura solo caracteres válidos, sin necesidad de lookahead complejo
+    const explicitSkuMatch = message.match(/(?:sku|SKU)[:\s]+([A-Za-z0-9\-]+)/i)
     const explicitIdMatch = message.match(/(?:id|ID)[:\s]+(\d+)/i)
     
     let providedExplicitSku = null
@@ -1124,9 +1126,18 @@ export async function processMessageWithAI(userId, message) {
     
     // Si hay SKU/ID explícito por regex, usarlo directamente (rápido, sin IA)
     if (explicitSkuMatch) {
-      providedExplicitSku = explicitSkuMatch[1].trim()
-      queryType = 'PRODUCTOS'
-      console.log(`[WooCommerce] 🔍 SKU explícito detectado por regex: "${providedExplicitSku}" → Consulta directa sin análisis de IA`)
+      const rawSku = explicitSkuMatch[1].trim()
+      // Normalizar inmediatamente para remover signos de interrogación y otros caracteres especiales
+      providedExplicitSku = normalizeCode(rawSku)
+      
+      // Validación: si después de normalizar está vacío o tiene caracteres inválidos, delegar a OpenAI
+      if (!providedExplicitSku || providedExplicitSku.length === 0) {
+        console.log(`[WooCommerce] ⚠️ SKU normalizado vacío después de regex, delegando a OpenAI...`)
+        providedExplicitSku = null // Forzar que OpenAI lo maneje
+      } else {
+        queryType = 'PRODUCTOS'
+        console.log(`[WooCommerce] 🔍 SKU explícito detectado: "${rawSku}" → normalizado: "${providedExplicitSku}" → Consulta directa sin análisis de IA`)
+      }
     }
     if (explicitIdMatch) {
       providedExplicitId = explicitIdMatch[1].trim()
@@ -1320,20 +1331,26 @@ export async function processMessageWithAI(userId, message) {
           
           // Buscar SKU numérico largo (ej: "601059110", "601050020") - sin restricción de longitud de mensaje
           // Los SKUs numéricos largos (6+ dígitos) son muy específicos y deben detectarse siempre
+          // CRÍTICO: Normalizar inmediatamente para remover signos de interrogación
           if (detectedSkus.length === 0) {
             const numericSkuMatch = message.match(/\b(\d{6,})\b/)
             if (numericSkuMatch) {
-              detectedSkus.push(numericSkuMatch[1].trim())
-              console.log(`[WooCommerce] 🔍 SKU numérico largo detectado: "${numericSkuMatch[1]}"`)
+              const rawSku = numericSkuMatch[1].trim()
+              const normalizedNumericSku = normalizeCode(rawSku) // Normalizar por si tiene caracteres especiales
+              detectedSkus.push(normalizedNumericSku)
+              console.log(`[WooCommerce] 🔍 SKU numérico largo detectado: "${rawSku}" → normalizado: "${normalizedNumericSku}"`)
             }
           }
         }
         
-        // Usar el primer SKU detectado
+        // Usar el primer SKU detectado y normalizarlo
         if (detectedSkus.length > 0) {
-          providedExplicitSku = detectedSkus[0]
+          // CRÍTICO: Normalizar el SKU detectado para remover signos de interrogación y otros caracteres especiales
+          providedExplicitSku = normalizeCode(detectedSkus[0])
           if (detectedSkus.length > 1) {
-            console.log(`[WooCommerce] ⚠️  Múltiples SKUs detectados: ${detectedSkus.join(', ')}. Buscando el primero: "${providedExplicitSku}"`)
+            console.log(`[WooCommerce] ⚠️  Múltiples SKUs detectados: ${detectedSkus.join(', ')}. Buscando el primero normalizado: "${providedExplicitSku}"`)
+          } else {
+            console.log(`[WooCommerce] 🔍 SKU detectado y normalizado: "${detectedSkus[0]}" → "${providedExplicitSku}"`)
           }
         }
         
@@ -1368,57 +1385,71 @@ export async function processMessageWithAI(userId, message) {
       // Buscar por SKU primero
       if (providedExplicitSku) {
         try {
-          // Normalizar el SKU proporcionado (N35 = N-35 = N 35)
-          const normalizedSku = normalizeCode(providedExplicitSku)
-          console.log(`[WooCommerce] SKU original: "${providedExplicitSku}" → normalizado: "${normalizedSku}"`)
+          // El SKU ya está normalizado en línea 1130, usar directamente (evitar doble normalización)
+          const normalizedSku = providedExplicitSku
+          console.log(`[WooCommerce] Buscando SKU normalizado: "${normalizedSku}"`)
           
-          const productBySku = await wordpressService.getProductBySku(providedExplicitSku)
-          if (productBySku) {
-            productStockData = productBySku
-            context.productStockData = productStockData
-            session.currentProduct = productBySku // Guardar para futuras referencias
-            console.log(`[WooCommerce] ✅ Producto encontrado por SKU explícito: ${productBySku.name || 'N/A'} (SKU: ${productBySku.sku || 'N/A'})`)
-            console.log(`   Stock: ${productBySku.stock_quantity !== null ? productBySku.stock_quantity : 'N/A'}, Precio: ${productBySku.price ? '$' + productBySku.price : 'N/A'}`)
-            
-            // Si es un producto variable, cargar variaciones automáticamente
-            if (productBySku.type === 'variable' && productBySku.id) {
-              console.log(`[WooCommerce] 🔄 Producto variable detectado, cargando variaciones automáticamente...`)
-              try {
-                const variations = await wordpressService.getProductVariations(productBySku.id)
-                if (variations && variations.length > 0) {
-                  context.productVariations = variations
-                  console.log(`[WooCommerce] ✅ ${variations.length} variaciones cargadas para "${productBySku.name}"`)
-                }
-              } catch (error) {
-                console.error(`[WooCommerce] ⚠️ Error cargando variaciones: ${error.message}`)
-              }
-            }
-          } else {
-            console.log(`[WooCommerce] ❌ No se encontró producto con SKU explícito: "${providedExplicitSku}"`)
-            console.log(`   Se omite búsqueda masiva en variaciones para evitar demoras; se intentará localizar por nombre con el código proporcionado.`)
+          // SIMPLIFICACIÓN: Para SKUs numéricos largos (6+ dígitos), buscar DIRECTAMENTE en WooCommerce
+          // Estos SKUs son exactos y no necesitan variaciones ni búsquedas complejas
+          const isLongNumericSku = /^\d{6,}$/.test(normalizedSku)
+          
+          if (isLongNumericSku) {
+            // SKU numérico largo → Búsqueda DIRECTA en WooCommerce (más rápido y eficiente)
+            console.log(`[WooCommerce] 🔍 SKU numérico largo detectado → Búsqueda directa en WooCommerce API`)
             try {
-              const allProducts = await wordpressService.getAllProducts()
-              const normalizedSku = normalizeCode(providedExplicitSku)
-              const productsWithCode = allProducts.filter(p => {
-                const productName = normalizeCode(p.name || '')
-                const productSku = normalizeCode(p.sku || '')
-                return productName.includes(normalizedSku) || productSku.includes(normalizedSku)
-              })
-              
-              if (productsWithCode.length === 1) {
-                productStockData = productsWithCode[0]
+              const directProduct = await wordpressService.getProductStock(normalizedSku)
+              if (directProduct) {
+                productStockData = directProduct
                 context.productStockData = productStockData
-                session.currentProduct = productsWithCode[0] // Guardar para futuras referencias
-                console.log(`[WooCommerce] ✅ Producto encontrado por código en nombre/SKU: ${productStockData.name} (SKU real: ${productStockData.sku || 'N/A'})`)
-              } else if (productsWithCode.length > 1) {
-                productSearchResults = productsWithCode.slice(0, 10) // limitar para no saturar respuestas
-                context.productSearchResults = productSearchResults
-                console.log(`[WooCommerce] ✅ Encontrados ${productsWithCode.length} productos que contienen "${providedExplicitSku}" en nombre/SKU`)
+                session.currentProduct = directProduct
+                console.log(`[WooCommerce] ✅ Producto encontrado por SKU directo: ${directProduct.name || 'N/A'} (SKU: ${directProduct.sku || 'N/A'})`)
+                console.log(`   Stock: ${directProduct.stock_quantity !== null ? directProduct.stock_quantity : 'N/A'}, Precio: ${directProduct.price ? '$' + directProduct.price : 'N/A'}`)
+                
+                // Si es un producto variable, cargar variaciones automáticamente
+                if (directProduct.type === 'variable' && directProduct.id) {
+                  console.log(`[WooCommerce] 🔄 Producto variable detectado, cargando variaciones automáticamente...`)
+                  try {
+                    const variations = await wordpressService.getProductVariations(directProduct.id)
+                    if (variations && variations.length > 0) {
+                      context.productVariations = variations
+                      console.log(`[WooCommerce] ✅ ${variations.length} variaciones cargadas para "${directProduct.name}"`)
+                    }
+                  } catch (error) {
+                    console.error(`[WooCommerce] ⚠️ Error cargando variaciones: ${error.message}`)
+                  }
+                }
               } else {
-                console.log(`[WooCommerce] ❌ Tampoco se encontró "${providedExplicitSku}" en nombres/SKU normalizados`)
+                console.log(`[WooCommerce] ❌ No se encontró producto con SKU: "${normalizedSku}"`)
               }
             } catch (error) {
-              console.log(`[WooCommerce] ⚠️  Error buscando código en nombres/SKU: ${error.message}`)
+              console.error(`[WooCommerce] ❌ Error en búsqueda directa por SKU: ${error.message}`)
+            }
+          } else {
+            // SKU alfanumérico (ej: "N35", "ABA1") → Usar búsqueda con variaciones
+            console.log(`[WooCommerce] 🔍 SKU alfanumérico detectado → Búsqueda con variaciones`)
+            const productBySku = await wordpressService.getProductBySku(normalizedSku)
+            if (productBySku) {
+              productStockData = productBySku
+              context.productStockData = productStockData
+              session.currentProduct = productBySku
+              console.log(`[WooCommerce] ✅ Producto encontrado por SKU: ${productBySku.name || 'N/A'} (SKU: ${productBySku.sku || 'N/A'})`)
+              console.log(`   Stock: ${productBySku.stock_quantity !== null ? productBySku.stock_quantity : 'N/A'}, Precio: ${productBySku.price ? '$' + productBySku.price : 'N/A'}`)
+              
+              // Si es un producto variable, cargar variaciones automáticamente
+              if (productBySku.type === 'variable' && productBySku.id) {
+                console.log(`[WooCommerce] 🔄 Producto variable detectado, cargando variaciones automáticamente...`)
+                try {
+                  const variations = await wordpressService.getProductVariations(productBySku.id)
+                  if (variations && variations.length > 0) {
+                    context.productVariations = variations
+                    console.log(`[WooCommerce] ✅ ${variations.length} variaciones cargadas para "${productBySku.name}"`)
+                  }
+                } catch (error) {
+                  console.error(`[WooCommerce] ⚠️ Error cargando variaciones: ${error.message}`)
+                }
+              }
+            } else {
+              console.log(`[WooCommerce] ❌ No se encontró producto con SKU: "${normalizedSku}"`)
             }
           }
         } catch (error) {

@@ -188,11 +188,14 @@ export async function verifyUserLogin(userId) {
  */
 export async function getProductStock(identifier) {
   try {
+    // CRÍTICO: Normalizar el identificador antes de buscar (remover signos de interrogación, etc.)
+    const normalizedIdentifier = typeof identifier === 'string' ? normalizeSkuForSearch(identifier) : identifier
+    
     // Intentar buscar por SKU primero
     let product = null
     
-    // Buscar por SKU
-    const searchBySku = await wcRequest(`products?sku=${encodeURIComponent(identifier)}&per_page=1`)
+    // Buscar por SKU normalizado
+    const searchBySku = await wcRequest(`products?sku=${encodeURIComponent(normalizedIdentifier)}&per_page=1`)
     if (searchBySku && Array.isArray(searchBySku) && searchBySku.length > 0) {
       product = searchBySku[0]
     } else {
@@ -396,14 +399,27 @@ export async function searchProductsInWordPress(searchTerm, limit = 10) {
  * @param {string} sku - SKU del producto
  * @returns {Promise<Object|null>} Producto encontrado o null
  */
+/**
+ * Normalizar SKU removiendo caracteres especiales (igual que normalizeCode en conversation.service.js)
+ */
+function normalizeSkuForSearch(sku) {
+  if (!sku || typeof sku !== 'string') return ''
+  return sku
+    .toUpperCase()
+    .replace(/[?¿!¡.,;:()\[\]{}'"\s_-]/g, '')  // Eliminar signos de interrogación, exclamación, puntuación, espacios, guiones
+    .trim()
+}
+
 export async function getProductBySku(sku) {
   try {
-    const originalSku = sku.trim()
+    // CRÍTICO: Normalizar SKU ANTES de generar variaciones (remover signos de interrogación, etc.)
+    const normalizedInputSku = normalizeSkuForSearch(sku)
+    const originalSku = normalizedInputSku || sku.trim()
     
-    // Generar variaciones del SKU para buscar
+    // Generar variaciones del SKU normalizado para buscar
     const skuVariations = [
-      originalSku,                    // Original
-      originalSku.toUpperCase(),       // Mayúsculas
+      originalSku,                    // Original normalizado
+      originalSku.toUpperCase(),       // Mayúsculas (ya está en mayúsculas, pero por si acaso)
       originalSku.toLowerCase(),      // Minúsculas
       originalSku.replace(/-/g, ''),  // Sin guiones
       originalSku.replace(/-/g, ' '), // Guiones por espacios
@@ -414,7 +430,7 @@ export async function getProductBySku(sku) {
     // Eliminar duplicados
     const uniqueVariations = [...new Set(skuVariations)]
     
-    console.log(`[WooCommerce] Buscando SKU "${originalSku}" con ${uniqueVariations.length} variaciones`)
+    console.log(`[WooCommerce] Buscando SKU "${sku.trim()}" → normalizado: "${originalSku}" con ${uniqueVariations.length} variaciones`)
     
     // Intentar cada variación hasta encontrar el producto
     for (const skuVariation of uniqueVariations) {
