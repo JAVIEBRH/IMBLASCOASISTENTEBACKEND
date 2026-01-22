@@ -109,6 +109,32 @@ function terminoCoincideConNombre(termino, nombreProducto) {
     palabrasNombre.some(palabraNom => palabraNom === palabraTerm || palabraTerm === palabraNom)
   )
   
+  // CRÍTICO: Si hay solo 1 palabra común Y el término tiene múltiples palabras,
+  // verificar que no haya palabras contradictorias (ej: "Metálico" vs "Acrílico")
+  if (hayPalabrasComunes && palabrasTermino.length > 1 && palabrasNombre.length > 1) {
+    // Obtener palabras que NO están en común
+    const palabrasTerminoNoComunes = palabrasTermino.filter(palabraTerm => 
+      !palabrasNombre.some(palabraNom => palabraNom === palabraTerm || palabraTerm === palabraNom)
+    )
+    const palabrasNombreNoComunes = palabrasNombre.filter(palabraNom => 
+      !palabrasTermino.some(palabraTerm => palabraTerm === palabraNom || palabraNom === palabraTerm)
+    )
+    
+    // Si hay palabras contradictorias (ej: "metálico" vs "acrílico", "linterna" vs "sublimable"),
+    // NO coincidir (evita falsos positivos como "Llavero Metálico" vs "Llavero Acrílico")
+    const palabrasContradictorias = palabrasTerminoNoComunes.some(palabraTerm => 
+      palabrasNombreNoComunes.some(palabraNom => {
+        // Verificar si son palabras que indican diferencias significativas (más de 3 caracteres)
+        return palabraTerm.length > 3 && palabraNom.length > 3 && 
+               palabraTerm.toLowerCase() !== palabraNom.toLowerCase()
+      })
+    )
+    
+    if (palabrasContradictorias) {
+      return false // Hay palabras contradictorias, no coincidir
+    }
+  }
+  
   if (hayPalabrasComunes) {
     return true
   }

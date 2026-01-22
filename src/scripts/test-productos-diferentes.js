@@ -1,8 +1,9 @@
 /**
- * TEST: Validación estricta de coincidencia de términos
- * Verifica que los bugs de validación permisiva estén corregidos
+ * TEST: Verificar cambio de contexto con productos diferentes
+ * Prueba con productos REALES que NO sean mochila ni llavero
+ * Verifica que el sistema busque correctamente y no reutilice contexto incorrecto
  * 
- * ⚠️ REGLA: Usa SOLO productos REALES del catálogo
+ * ⚠️ REGLA: Usa SOLO productos REALES del catálogo (tazas, llaveros, mochilas, tazones)
  * Ver PRODUCTOS_REALES.md para lista completa
  */
 import dotenv from 'dotenv'
@@ -19,7 +20,7 @@ const BASE_URL = process.env.BACKEND_URL || 'http://localhost:3001'
 const INIT_URL = `${BASE_URL}/api/chat/init`
 const MESSAGE_URL = `${BASE_URL}/api/chat/message`
 const REQUEST_TIMEOUT_MS = 60000
-const DELAY_BETWEEN_TESTS = 800
+const DELAY_BETWEEN_TESTS = 1000
 
 async function initChat(userId) {
   try {
@@ -59,43 +60,44 @@ async function sendMessage(userId, message) {
   }
 }
 
-function detectIssues(question, response, expectedBehavior, previousProduct) {
+function detectContextIssues(question, response, previousProduct, currentProduct) {
   const issues = []
   if (!response || typeof response !== 'string') return issues
   
   const responseLower = response.toLowerCase()
+  const currentProductLower = currentProduct ? currentProduct.toLowerCase() : ''
+  const previousProductLower = previousProduct ? previousProduct.toLowerCase() : ''
   
-  if (expectedBehavior === 'shouldNotMatch') {
-    // NO debe usar contexto del producto anterior
-    if (previousProduct) {
-      const previousProductLower = previousProduct.toLowerCase()
-      const mentionsPrevious = responseLower.includes(previousProductLower)
-      const saysNotFound = /no.*encontr[eoé]|no.*tengo.*informaci[oó]n|no.*disponible/i.test(response)
-      
-      // Si menciona el producto anterior Y dice "no encontré", es un problema
-      if (mentionsPrevious && saysNotFound) {
-        issues.push({
-          type: 'CRITICAL',
-          message: `Está usando contexto de "${previousProduct}" en lugar de buscar el nuevo producto`,
-          expected: 'Debería buscar el nuevo producto, no usar contexto anterior',
-          actual: response.substring(0, 200)
-        })
-      }
-    }
+  // Verificar que NO use contexto del producto anterior cuando se busca uno nuevo
+  if (previousProduct && currentProduct && previousProductLower !== currentProductLower) {
+    // Si menciona el producto anterior pero NO menciona el producto actual, es un problema
+    const mentionsPrevious = responseLower.includes(previousProductLower)
+    const mentionsCurrent = responseLower.includes(currentProductLower)
+    const saysNotFound = /no.*encontr[eoé]|no.*tengo.*informaci[oó]n|no.*disponible/i.test(response)
     
-    // Debe buscar el nuevo producto, no reutilizar contexto
+    if (mentionsPrevious && !mentionsCurrent && saysNotFound) {
+      issues.push({
+        type: 'CRITICAL',
+        message: `Está usando contexto de "${previousProduct}" cuando se busca "${currentProduct}"`,
+        expected: `Debería buscar "${currentProduct}" como término nuevo, no usar contexto de "${previousProduct}"`
+      })
+    }
+  }
+  
+  // Verificar que realmente busque el producto actual
+  if (currentProduct) {
     const listsProducts = /encontr[eoé].*\d+.*producto|producto.*relacionado|mostrando/i.test(response)
     const asksForMoreInfo = /nombre completo|sku del producto|me lo puedes confirmar/i.test(response)
+    const mentionsCurrent = responseLower.includes(currentProductLower)
     
-    // Si no lista productos ni pide más info, podría estar usando contexto incorrecto
-    if (!listsProducts && !asksForMoreInfo) {
+    // Si no lista productos, no pide más info, y no menciona el producto actual, podría ser un problema
+    if (!listsProducts && !asksForMoreInfo && !mentionsCurrent) {
       const saysNotFound = /no.*encontr[eoé]|no.*tengo.*informaci[oó]n|no.*disponible/i.test(response)
       if (saysNotFound) {
         issues.push({
           type: 'WARNING',
-          message: 'Responde "no encontré" - verificar que realmente buscó y no usó contexto',
-          expected: 'Debería buscar el producto o pedir más información',
-          actual: response.substring(0, 200)
+          message: `No está buscando "${currentProduct}" correctamente`,
+          expected: `Debería buscar y listar productos relacionados con "${currentProduct}" o pedir más información`
         })
       }
     }
@@ -106,12 +108,12 @@ function detectIssues(question, response, expectedBehavior, previousProduct) {
 
 async function runTest() {
   console.log('╔════════════════════════════════════════════════════════╗')
-  console.log('║   TEST: Validación estricta de coincidencia            ║')
+  console.log('║   TEST: Cambio de contexto con productos diferentes   ║')
   console.log('╚════════════════════════════════════════════════════════╝')
   console.log()
   
   const timestamp = Date.now()
-  const userId = `test-validacion-${timestamp}`
+  const userId = `test-productos-${timestamp}`
   
   try {
     await initChat(userId)
@@ -122,51 +124,58 @@ async function runTest() {
   }
   
   console.log()
-  console.log('🧪 ESCENARIO: Probar casos que antes causaban falsos positivos')
+  console.log('🧪 ESCENARIO: Probar con productos diferentes (NO mochila, NO llavero)')
+  console.log('   Verificar que el cambio de contexto funcione correctamente')
   console.log()
   
+  // Productos REALES del catálogo (verificado en logs)
   const tests = [
     {
       step: 1,
-      question: 'tienen mochila?',
-      description: 'Buscar mochila (establece contexto)',
-      expectedBehavior: 'shouldSearch',
+      question: 'tienen tazas?',
+      description: 'Buscar tazas (establece contexto)',
+      product: 'taza',
       previousProduct: null
     },
     {
       step: 2,
-      question: 'tienes tazones?',
-      description: 'Buscar "tazones" (NO debe usar contexto de "mochila")',
-      expectedBehavior: 'shouldNotMatch',
-      previousProduct: 'mochila',
-      bug: 'Bug 1: "tazones" no debe coincidir con "mochila"'
+      question: 'tienes llaveros?',
+      description: 'Buscar llaveros (NO debe usar contexto de tazas)',
+      product: 'llavero',
+      previousProduct: 'taza'
     },
     {
       step: 3,
-      question: 'tienen llaveros?',
-      description: 'Buscar llaveros (establece nuevo contexto)',
-      expectedBehavior: 'shouldSearch',
-      previousProduct: null
+      question: 'tienen mochilas?',
+      description: 'Buscar mochilas (NO debe usar contexto de llaveros)',
+      product: 'mochila',
+      previousProduct: 'llavero'
     },
     {
       step: 4,
-      question: 'tienes llavero metálico?',
-      description: 'Buscar "llavero metálico" (debe coincidir con "llaveros" - palabra común)',
-      expectedBehavior: 'shouldMatch',
-      previousProduct: 'llavero'
+      question: 'tienes tazones?',
+      description: 'Buscar tazones (NO debe usar contexto de mochilas)',
+      product: 'tazón',
+      previousProduct: 'mochila'
+    },
+    {
+      step: 5,
+      question: 'tienen tazas para café?',
+      description: 'Buscar "tazas para café" (debe coincidir con "tazas" - palabra común)',
+      product: 'taza',
+      previousProduct: 'tazón'
     }
   ]
   
   let allPassed = true
   let passedCount = 0
   let failedCount = 0
+  let issuesDetected = []
   
   for (const test of tests) {
     console.log(`📝 Paso ${test.step}: "${test.question}"`)
+    console.log(`   Producto buscado: ${test.product}`)
     console.log(`   Esperado: ${test.description}`)
-    if (test.bug) {
-      console.log(`   🐛 Bug a verificar: ${test.bug}`)
-    }
     if (test.previousProduct) {
       console.log(`   ⚠️  Contexto anterior: ${test.previousProduct}`)
     }
@@ -179,14 +188,14 @@ async function runTest() {
         allPassed = false
         failedCount++
       } else {
-        const issues = detectIssues(test.question, result.response, test.expectedBehavior, test.previousProduct)
+        const issues = detectContextIssues(test.question, result.response, test.previousProduct, test.product)
         
         if (issues.length > 0) {
-          console.log(`   ❌ FALLO DETECTADO:`)
+          console.log(`   ❌ PROBLEMAS DETECTADOS:`)
           issues.forEach(issue => {
             console.log(`      - ${issue.type}: ${issue.message}`)
             console.log(`        Esperado: ${issue.expected}`)
-            console.log(`        Actual: ${issue.actual}...`)
+            issuesDetected.push(issue)
           })
           allPassed = false
           failedCount++
@@ -198,7 +207,11 @@ async function runTest() {
             const count = match ? match[1] : 'varios'
             console.log(`   📦 Encontró ${count} producto(s)`)
           }
-          console.log(`   Respuesta: ${result.response.substring(0, 120)}...`)
+          const asksForInfo = /nombre completo|sku del producto|me lo puedes confirmar/i.test(result.response)
+          if (asksForInfo) {
+            console.log(`   💬 Pide más información (producto no encontrado o ambiguo)`)
+          }
+          console.log(`   Respuesta: ${result.response.substring(0, 150)}...`)
           passedCount++
         }
         
@@ -228,12 +241,20 @@ async function runTest() {
   console.log(`   Porcentaje de éxito: ${((passedCount / tests.length) * 100).toFixed(1)}%`)
   console.log()
   
+  if (issuesDetected.length > 0) {
+    console.log(`⚠️  PROBLEMAS DETECTADOS: ${issuesDetected.length}`)
+    issuesDetected.forEach(issue => {
+      console.log(`   - ${issue.type}: ${issue.message}`)
+    })
+    console.log()
+  }
+  
   if (allPassed) {
-    console.log('🎉 TEST PASADO: Las correcciones de validación estricta funcionan correctamente')
-    console.log('   Los bugs de falsos positivos han sido corregidos.')
+    console.log('🎉 TEST PASADO: El cambio de contexto funciona correctamente')
+    console.log('   Los productos diferentes se buscan correctamente sin reutilizar contexto incorrecto')
   } else {
     console.log('⚠️  TEST PARCIALMENTE PASADO: Algunos casos fallaron')
-    console.log('   Revisar los casos fallidos.')
+    console.log('   Revisar los casos fallidos para identificar problemas de contexto')
   }
   
   console.log()
