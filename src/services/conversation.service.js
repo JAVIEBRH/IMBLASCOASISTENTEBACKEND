@@ -83,6 +83,100 @@ function normalizeCode(code) {
 }
 
 /**
+ * Verificar si un término coincide con un nombre de producto de manera estricta
+ * Evita falsos positivos como "mochilas cocina" coincidiendo con "mochila"
+ * @param {string} termino - Término de búsqueda normalizado
+ * @param {string} nombreProducto - Nombre del producto normalizado
+ * @returns {boolean} - true si hay coincidencia válida
+ */
+function terminoCoincideConNombre(termino, nombreProducto) {
+  if (!termino || !nombreProducto || termino.length === 0 || nombreProducto.length === 0) {
+    return false
+  }
+  
+  // Caso 1: El término es exactamente igual al nombre (o viceversa)
+  if (termino === nombreProducto) {
+    return true
+  }
+  
+  // Caso 2: El término es una palabra completa del nombre
+  // Dividir en palabras y verificar coincidencias de palabras completas
+  const palabrasTermino = termino.split(/\s+/).filter(p => p.length > 2) // Solo palabras de más de 2 caracteres
+  const palabrasNombre = nombreProducto.split(/\s+/).filter(p => p.length > 2)
+  
+  // Si hay palabras en común (coincidencia de palabra completa)
+  const hayPalabrasComunes = palabrasTermino.some(palabraTerm => 
+    palabrasNombre.some(palabraNom => palabraNom === palabraTerm || palabraTerm === palabraNom)
+  )
+  
+  if (hayPalabrasComunes) {
+    return true
+  }
+  
+  // Caso 3: El término es un prefijo/sufijo significativo del nombre (mínimo 4 caracteres)
+  // Esto captura casos como "mochila" vs "mochilas" pero evita "mochilas cocina" vs "mochila"
+  // Solo permitir si la diferencia de longitud es pequeña (máximo 2 caracteres, para plurales)
+  if (termino.length >= 4 && nombreProducto.length >= 4) {
+    const diferencia = Math.abs(termino.length - nombreProducto.length)
+    // Solo permitir si la diferencia es pequeña (típico de plurales: "mochila" vs "mochilas")
+    if (diferencia <= 2) {
+      // Verificar si el término es prefijo del nombre (ej: "mochila" en "mochilas")
+      // O si el nombre es prefijo del término (ej: "mochila" en "mochilas")
+      if (nombreProducto.startsWith(termino) || termino.startsWith(nombreProducto)) {
+        return true
+      }
+    }
+  }
+  
+  return false
+}
+
+/**
+ * Verificar si un término coincide con un SKU de manera estricta
+ * Evita falsos positivos como "K6" coincidiendo con "K620" o strings vacíos
+ * @param {string} termino - Término de búsqueda normalizado
+ * @param {string} skuProducto - SKU del producto normalizado
+ * @returns {boolean} - true si hay coincidencia válida
+ */
+function terminoCoincideConSku(termino, skuProducto) {
+  // CRÍTICO: Si el SKU está vacío, nunca coincidir (evita bug donde includes('') siempre es true)
+  if (!skuProducto || skuProducto.length === 0) {
+    return false
+  }
+  
+  if (!termino || termino.length === 0) {
+    return false
+  }
+  
+  // Caso 1: Coincidencia exacta
+  if (termino === skuProducto) {
+    return true
+  }
+  
+  // Caso 2: El término es exactamente igual al SKU normalizado (sin espacios)
+  const terminoSinEspacios = termino.replace(/\s+/g, '')
+  const skuSinEspacios = skuProducto.replace(/\s+/g, '')
+  
+  if (terminoSinEspacios === skuSinEspacios) {
+    return true
+  }
+  
+  // Caso 3: Coincidencia de prefijo solo si ambos tienen al menos 3 caracteres
+  // Esto evita que "K6" coincida con "K620", pero permite "K62" coincidir con "K620"
+  if (termino.length >= 3 && skuProducto.length >= 3) {
+    if (skuProducto.startsWith(termino) || termino.startsWith(skuProducto)) {
+      // Verificar que la diferencia de longitud no sea muy grande (máximo 2 caracteres)
+      const diferencia = Math.abs(termino.length - skuProducto.length)
+      if (diferencia <= 2) {
+        return true
+      }
+    }
+  }
+  
+  return false
+}
+
+/**
  * Convertir plural a singular en español (robusto y general)
  * @param {string} word - Palabra en plural
  * @returns {string} - Palabra en singular
@@ -1420,11 +1514,10 @@ export async function processMessageWithAI(userId, message) {
           const skuProductoNormalizado = normalizeSearchText(productStockData.sku || '')
           
           // Verificar si el término coincide con el nombre o SKU del producto en contexto
-          // Usar coincidencia bidireccional para capturar casos como "mochila" vs "mochilas" o "llavero" vs "llaveros"
-          const terminoCoincide = nombreProductoNormalizado.includes(terminoNormalizado) || 
-                                  terminoNormalizado.includes(nombreProductoNormalizado) ||
-                                  skuProductoNormalizado.includes(terminoNormalizado) ||
-                                  terminoNormalizado.includes(skuProductoNormalizado)
+          // Usar validación estricta para evitar falsos positivos (ej: "mochilas cocina" vs "mochila")
+          const coincideNombre = terminoCoincideConNombre(terminoNormalizado, nombreProductoNormalizado)
+          const coincideSku = terminoCoincideConSku(terminoNormalizado, skuProductoNormalizado)
+          const terminoCoincide = coincideNombre || coincideSku
           
           if (!terminoCoincide) {
             console.log(`[WooCommerce] ⚠️ Término "${terminoProductoParaBuscar}" NO coincide con producto en contexto "${productStockData.name}" - limpiando contexto y buscando nuevo producto`)
@@ -1445,14 +1538,12 @@ export async function processMessageWithAI(userId, message) {
         // verificar si el término coincide con alguno de los resultados. Si no coincide, limpiar resultados.
         if (!productStockData && terminoProductoParaBuscar && context.productSearchResults && context.productSearchResults.length > 0) {
           const terminoNormalizado = normalizeSearchText(terminoProductoParaBuscar)
-          // Verificar si el término coincide con alguno de los productos en los resultados
+          // Verificar si el término coincide con alguno de los productos en los resultados usando validación estricta
           const algunoCoincide = context.productSearchResults.some(product => {
             const nombreNormalizado = normalizeSearchText(product.name || '')
             const skuNormalizado = normalizeSearchText(product.sku || '')
-            return nombreNormalizado.includes(terminoNormalizado) || 
-                   terminoNormalizado.includes(nombreNormalizado) ||
-                   skuNormalizado.includes(terminoNormalizado) ||
-                   terminoNormalizado.includes(skuNormalizado)
+            return terminoCoincideConNombre(terminoNormalizado, nombreNormalizado) ||
+                   terminoCoincideConSku(terminoNormalizado, skuNormalizado)
           })
           
           if (!algunoCoincide) {
