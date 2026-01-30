@@ -12,10 +12,9 @@ import ProductIndex from './ProductIndex.js';
 import Cart from './Cart.js';
 import Order from './Order.js';
 import User from './User.js';
-import Invoice from './Invoice.js';
-import Payment from './Payment.js';
 import StockMovement from './StockMovement.js';
 import Conversation from './Conversation.js';
+import ConversationDash from './ConversationDash.js';
 
 // Conectar a MongoDB al cargar modelos (opcional, puede hacerse en index.js)
 // await connect();
@@ -26,10 +25,9 @@ export {
   Cart,
   Order,
   User,
-  Invoice,
-  Payment,
   StockMovement,
-  Conversation
+  Conversation,
+  ConversationDash
 };
 
 export default {
@@ -38,8 +36,7 @@ export default {
   Cart,
   Order,
   User,
-  Invoice,
-  Payment,
   StockMovement,
-  Conversation
+  Conversation,
+  ConversationDash
 };
