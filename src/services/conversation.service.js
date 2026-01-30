@@ -1844,28 +1844,23 @@ export async function processMessageWithAI(userId, message) {
                           productSku.includes(word.toUpperCase())
                         )
                       })
-                      
-                      if (partialMatches.length > 0) {
+
+                      const hasPartialMatches = partialMatches.length > 0
+                      if (hasPartialMatches) {
                         // Ordenar por relevancia: productos que contengan más palabras clave primero
                         const scoredMatches = partialMatches.map(product => {
-                          const productName = normalizeSearchText(product.name || '') // Normalizar nombre
-                          const productSku = normalizeCode(product.sku || '')        // Normalizar SKU
+                          const productName = normalizeSearchText(product.name || '')
+                          const productSku = normalizeCode(product.sku || '')
                           let score = 0
-                          
-                          // Puntuar por cada variación encontrada
                           allVariations.forEach(word => {
                             const wordUpper = word.toUpperCase()
-                            if (productSku.includes(wordUpper)) score += 3 // SKU tiene más peso
+                            if (productSku.includes(wordUpper)) score += 3
                             if (productName.includes(word)) score += 2
-                            // Bonus si la palabra está al inicio del nombre
                             if (productName.startsWith(word + ' ')) score += 1
                           })
-                          
                           return { product, score }
                         }).sort((a, b) => b.score - a.score)
-                        
-                        const topMatches = scoredMatches.slice(0, 10).map(m => m.product) // Top 10 más relevantes
-                        
+                        const topMatches = scoredMatches.slice(0, 10).map(m => m.product)
                         console.log(`[WooCommerce] ✅ Encontrados ${partialMatches.length} productos que contienen "${termToUse}" (mostrando top ${topMatches.length})`)
                         productSearchResults = topMatches
                         context.productSearchResults = productSearchResults
