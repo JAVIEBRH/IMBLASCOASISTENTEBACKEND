@@ -80,7 +80,6 @@ import { chatRouter } from "./routes/chat.routes.js";
 import { authRouter } from "./routes/auth.routes.js";
 import { indexRouter } from "./routes/index.routes.js";
 import { clientRouter } from "./routes/client.routes.js";
-import { reportRouter } from "./routes/report.routes.js";
 import { testConnection, connect } from "./config/database.js";
 import { errorHandler, notFound } from "./middleware/errorHandler.js";
 
@@ -146,7 +145,6 @@ app.use("/api/auth", authRouter); // Autenticación
 app.use("/api/stock", stockRouter);
 app.use("/api/chat", chatRouter);
 app.use("/api/client", clientRouter); // Clientes
-app.use("/api/report", reportRouter); // Reportes
 
 // 404 handler
 app.use(notFound);
